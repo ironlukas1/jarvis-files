@@ -28,7 +28,7 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # One serves at a time. "q38-q2" is also wired to the systemd user unit
 # llama.service; the rest are started directly by this script.
 #
-# rec: key | name | quant | size | n-cpu-moe | fit-note | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default, else llama-server --reasoning value)
+# rec: key | name | quant | size | n-cpu-moe | fit-note | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default, else llama-server --reasoning value) | chat-template file (blank = GGUF built-in)
 # All dense qwen35 archs here have 65 blocks. ~14 GB of weights is the safe full-GPU
 # ceiling on this 16 GB card (proven by q38-27b); anything bigger gets partial -ngl
 # so the rest spills to RAM instead of OOMing at startup.
@@ -38,12 +38,17 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # complaint on Jarvis, not GPU speed. Pinned to "off" here so they behave like the
 # other conversational models. See memory: jarvis-smart-home-build.
 MODELS=(
-  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~61 GB|42|fits RAM, tight (llama.service)|/mnt/models2/qwen38-q2kxl/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
+  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~61 GB|42|fits RAM, tight (llama.service)|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
+  "q38-iq3|Qwen3.8-Flash-Next|UD-IQ3_XXS|~77 GB|42|fits RAM, tight|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|98304||"
+  "q38-q4|Qwen3.8-Flash-Next|UD-Q4_K_XL|~104 GB|48|mmap from Kingston, RAM+disk|/home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf|32768||"
+  "q38-q5|Qwen3.8-Flash-Next|UD-Q5_K_XL|~147 GB|48|mmap from Kingston, fastest decode|/home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf|32768||"
+  "q38-q6|Qwen3.8-Flash-Next|UD-Q6_K_XL|~158 GB|48|mmap from Kingston, RAM+disk|/home/ocino/models-fast/UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00001-of-00006.gguf|32768||"
+  "q38-q8|Qwen3.8-Flash-Next|Q8_0|~175 GB|48|mmap from Kingston, RAM+disk|/home/ocino/models-fast/Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf|32768||"
   "q38-27b|Qwen3.8-27B dense|UD-IQ4_XS|~14 GB|0|fits GPU (16 GB) at 16k ctx|/mnt/models2/qwen38-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|16384|99|"
   "swift|Swift-Qwen3.8-27B|Q4_K_M|18.0 GB|0|~48/65 layers on GPU, rest RAM|/mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf|16384|48|"
   "gsq-rco|Qwen3.8-27B GSQ-RCO|IQ3_S-mtp|12.1 GB|0|fits GPU (16 GB) fully|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|32768|99|"
   "huihui-abliterated|Huihui-Qwen3.8-27B abliterated|UD-Q4_K_XL|17.4 GB|0|~50/65 layers on GPU, rest RAM|/mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf|65536|50|off"
-  "0bserverx-heretic|Qwen3.8-27B Heretic|Q4_K_M-multilingual-mtp|17.0 GB|0|~52/65 layers on GPU, rest RAM|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|65536|52|off"
+  "0bserverx-heretic|Qwen3.8-27B Heretic|Q4_K_M-multilingual-mtp|17.0 GB|0|~52/65 layers on GPU, rest RAM|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|65536|52|off|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja"
   "cloud|DeepSeek-V4-Flash|hosted|OpenRouter|-|nothing to start|deepseek/deepseek-v4-flash-0731|-||"
 )
 
@@ -53,8 +58,8 @@ C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=
 die()  { printf '%serror:%s %s\n' "$C_R" "$C_OFF" "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
 
-# rec fields: 1 key  2 name  3 quant  4 size  5 n-cpu-moe  6 fit-note  7 path/id
-field() { # field <key> <index 1-7>
+# rec fields: 1 key  2 name  3 quant  4 size  5 n-cpu-moe  6 fit-note  7 path/id  8 ctx  9 ngl  10 reasoning  11 chat-template
+field() { # field <key> <index 1-11>
   local rec f
   for rec in "${MODELS[@]}"; do
     [[ "${rec%%|*}" == "$1" ]] || continue
@@ -202,10 +207,10 @@ echo; echo TIMEOUT; journalctl --user -u llama.service -n 15 --no-pager; exit 1
 EOS
 }
 
-start_direct() { # start_direct <gguf> <n-cpu-moe> <alias> <ctx> <ngl> <reasoning>
-  rexec "$1" "$2" "$3" "$4" "$5" "${6:-}" <<'EOS'
+start_direct() { # start_direct <gguf> <n-cpu-moe> <alias> <ctx> <ngl> <reasoning> <chat-template>
+  rexec "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" <<'EOS'
 set -u
-GGUF=$1; MOE=$2; ALIAS=$3; CTX=${4:-32768}; NGL=${5:-99}; REASONING=${6:-}
+GGUF=$1; MOE=$2; ALIAS=$3; CTX=${4:-32768}; NGL=${5:-99}; REASONING=${6:-}; TPL=${7:-}
 LOG="$HOME/logs/model-$ALIAS.log"; mkdir -p ~/logs
 BIN=~/llama.cpp/build-cuda/bin/llama-server
 [ -x "$BIN" ] || { echo "MISSING: $BIN"; exit 1; }
@@ -217,6 +222,7 @@ else
   EXTRA+=(--cache-type-k q8_0 --cache-type-v q8_0)   # dense: shrink KV; partial -ngl spills rest to RAM
 fi
 [ -n "$REASONING" ] && EXTRA+=(--reasoning "$REASONING")
+if [ -n "$TPL" ]; then [ -f "$TPL" ] || { echo "MISSING: $TPL"; exit 1; }; EXTRA+=(--chat-template-file "$TPL"); fi
 setsid "$BIN" -m "$GGUF" -ngl "$NGL" "${EXTRA[@]}" \
   -t 24 -c "$CTX" --parallel 1 --jinja -b 2048 -ub 512 \
   --host 127.0.0.1 --port 8000 --alias "$ALIAS" \
@@ -344,9 +350,9 @@ pick() {
 }
 
 activate() { # activate <key>
-  local key="$1" name quant moe path ctx reasoning
+  local key="$1" name quant moe path ctx reasoning tpl
   name=$(field "$key" 2); quant=$(field "$key" 3); moe=$(field "$key" 5)
-  path=$(field "$key" 7); ctx=$(field "$key" 8); ngl=$(field "$key" 9); reasoning=$(field "$key" 10)
+  path=$(field "$key" 7); ctx=$(field "$key" 8); ngl=$(field "$key" 9); reasoning=$(field "$key" 10); tpl=$(field "$key" 11)
 
   if [[ "$key" == cloud ]]; then
     info ""; info "  remote      nothing to start (OpenRouter)"
@@ -372,7 +378,7 @@ activate() { # activate <key>
   if [[ "$key" == q38-q2 ]]; then
     out=$(start_unit) || rc=$?
   else
-    out=$(start_direct "$path" "$moe" "$key" "$ctx" "$ngl" "$reasoning") || rc=$?
+    out=$(start_direct "$path" "$moe" "$key" "$ctx" "$ngl" "$reasoning" "$tpl") || rc=$?
   fi
   if [[ $rc -ne 0 ]]; then
     printf '\n%sFailed to start %s %s.%s\n\n%s\n\n' "$C_R" "$name" "$quant" "$C_OFF" "$out"

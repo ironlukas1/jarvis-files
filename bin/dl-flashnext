@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# re-download Flash-Next quants to Kingston ~/models-fast (Q5 first = recommended)
+export PATH=$HOME/.local/bin:$PATH
+for q in UD-Q5_K_XL UD-Q4_K_XL UD-Q6_K_XL Q8_0; do
+  echo "=== $(date +%F\ %T) $q"
+  for try in 1 2 3; do
+    hf download unsloth/Qwen3.8-Flash-Next-GGUF --include "$q/*" --local-dir $HOME/models-fast && break
+    echo "retry $try"; sleep 60
+  done
+done
+echo "=== $(date +%F\ %T) DONE"
