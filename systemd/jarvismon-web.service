@@ -1,0 +1,14 @@
+[Unit]
+Description=jarvismon over HTTP (port 8777)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=%h
+ExecStart=%h/.local/bin/jarvismon-web 8777
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

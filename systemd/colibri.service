@@ -1,0 +1,21 @@
+[Unit]
+Description=Colibri LLM server (DeepSeek-V4-Flash) OpenAI API on :8000
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/colibri/c
+Environment=HOME=%h
+# --ram 44 zamerne, nie 48: pri 48 stroj swapoval ~3.4 GB a rychlost bola
+# v ramci merania rovnaka (2.45 vs 2.47 tok/s pri 120 tokenoch).
+ExecStart=/usr/bin/python3 %h/colibri/c/coli serve \
+  --model %h/models/DeepSeek-V4-Flash \
+  --ram 44
+ExecStop=/usr/bin/python3 %h/colibri/c/coli stop
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

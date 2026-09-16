@@ -1,0 +1,24 @@
+[Unit]
+Description=Wyoming faster-whisper (GPU, Slovak) for Home Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/wyoming-whisper-gpu
+Environment=LD_LIBRARY_PATH=/home/ocino/wyoming-whisper-gpu/venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/home/ocino/wyoming-whisper-gpu/venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/home/ocino/wyoming-whisper-gpu/venv/lib/python3.12/site-packages/nvidia/cublas/lib:
+Environment=HOME=%h
+ExecStart=%h/wyoming-whisper-gpu/venv/bin/python -m wyoming_faster_whisper \
+  --uri tcp://0.0.0.0:10300 \
+  --model large-v3-turbo \
+  --language sk \
+  --device cuda \
+  --compute-type float16 \
+  --beam-size 1 \
+  --data-dir %h/wyoming-whisper-gpu/data \
+  --download-dir %h/wyoming-whisper-gpu/data
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
