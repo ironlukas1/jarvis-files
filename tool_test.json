@@ -1,0 +1,106 @@
+{
+  "model": "deepseek/deepseek-v4-flash",
+  "temperature": 0.2,
+  "top_p": 0.85,
+  "tool_choice": "auto",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Si Jarvis, hlasový asistent v slovenskej domácnosti. Odpovedaj po slovensky, stručne a vecne. Ak niečo nevieš alebo si nie si istý, povedz priamo, že to nevieš. Nikdy si nevymýšľaj fakty."
+    },
+    {
+      "role": "user",
+      "content": "Zhasni svetlá v obývačke."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "HassTurnOn",
+        "description": "Zapne zariadenie, svetlo alebo spotrebič v danej miestnosti.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Názov zariadenia, napr. 'svetlá'." },
+            "area": { "type": "string", "description": "Miestnosť, napr. 'obývačka'." }
+          },
+          "required": ["area"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "HassTurnOff",
+        "description": "Vypne zariadenie, svetlo alebo spotrebič v danej miestnosti.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Názov zariadenia, napr. 'svetlá'." },
+            "area": { "type": "string", "description": "Miestnosť, napr. 'obývačka'." }
+          },
+          "required": ["area"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "HassClimateSetTemperature",
+        "description": "Nastaví cieľovú teplotu termostatu v danej miestnosti.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "temperature": { "type": "number", "description": "Cieľová teplota v stupňoch Celzia." },
+            "area": { "type": "string", "description": "Miestnosť." }
+          },
+          "required": ["temperature"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "HassGetState",
+        "description": "Zistí aktuálny stav zariadenia alebo senzora (teplota, vlhkosť, zapnuté/vypnuté).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Názov zariadenia alebo senzora." },
+            "area": { "type": "string", "description": "Miestnosť." }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "remember_fact",
+        "description": "Uloží fakt do dlhodobej pamäte asistenta na neskoršie vybavenie.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "fact": { "type": "string", "description": "Fakt, ktorý sa má zapamätať." }
+          },
+          "required": ["fact"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "confirm_pc_action",
+        "description": "Potvrdí a vykoná čakajúcu akciu na počítači. Používaj len na explicitné potvrdenie od používateľa.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action_id": { "type": "string", "description": "Identifikátor čakajúcej akcie." }
+          },
+          "required": ["action_id"]
+        }
+      }
+    }
+  ]
+}

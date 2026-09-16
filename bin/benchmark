@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# benchmark — measure tok/s for one or more Jarvis models.
+# Brings each model up with `model <key> -y`, runs a fixed prompt 3x,
+# reports the median generation speed. Writes docs/evals/benchmark-<date>.{md,json}.
+set -uo pipefail
+
+ENDPOINT="${BENCH_ENDPOINT:-http://localhost:8000}"
+REMOTE="${MODEL_REMOTE:-jarvis}"
+MODEL_BIN="${MODEL_BIN:-model}"
+RUNS="${BENCH_RUNS:-3}"
+MAXTOK="${BENCH_MAXTOK:-256}"
+PROMPT="${BENCH_PROMPT:-List the eight planets of the Solar System in order from the Sun. For each, give one sentence on what makes it distinctive. Then add a two-sentence closing note on why the order matters.}"
+
+KEYS=("$@")
+[[ ${#KEYS[@]} -eq 0 ]] && KEYS=(q38-q2 q38-27b)
+
+C_OFF=$'\e[0m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_DIM=$'\e[2m'
+[[ -t 1 ]] || { C_OFF=; C_B=; C_G=; C_Y=; C_R=; C_DIM=; }
+say()  { printf '%s\n' "$*"; }
+die()  { printf '%serror:%s %s\n' "$C_R" "$C_OFF" "$*" >&2; exit 1; }
+
+command -v jq   >/dev/null || die "jq required"
+command -v curl >/dev/null || die "curl required"
+
+DATE=$(date +%Y-%m-%d)
+OUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/evals"
+mkdir -p "$OUT_DIR"
+MD="$OUT_DIR/benchmark-$DATE.md"
+JSON="$OUT_DIR/benchmark-$DATE.json"
+
+on_jarvis() { [[ "$(hostname 2>/dev/null)" =~ jarvis ]]; }
+jremote() { if on_jarvis; then bash -c "$1"; else ssh -o BatchMode=yes "$REMOTE" "$1" 2>/dev/null; fi; }
+jarvis_ram_mb()  { jremote "free -m | awk '/Mem:/{print \$3}'" || echo "?"; }
+jarvis_vram_mb() { jremote "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1" || echo "?"; }
+median() { printf '%s\n' "$@" | sort -n | awk '{a[NR]=$1} END{m=(NR%2)? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2; printf "%.1f", m}'; }
+r1() { awk -v x="$1" 'BEGIN{printf "%.1f", x}'; }
+
+wait_healthy() { # wait_healthy <seconds>
+  local t=$1
+  for ((i=0; i<t; i++)); do
+    curl -sf -m 3 "$ENDPOINT/health" >/dev/null 2>&1 && return 0
+    curl -sf -m 3 "$ENDPOINT/v1/models" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+one_run() { # one_run  -> "wall_s gen_toks prompt_toks predicted_tps prompt_tps"
+  local body resp wall t0 t1
+  body=$(jq -n --arg p "$PROMPT" --argjson n "$MAXTOK" \
+    '{model:"bench", messages:[{role:"user",content:$p}], temperature:0, max_tokens:$n, stream:false, timings_per_token:true}')
+  t0=$(date +%s.%N)
+  resp=$(curl -sf -m 600 "$ENDPOINT/v1/chat/completions" -H 'content-type: application/json' -d "$body") || { echo "ERR"; return 1; }
+  t1=$(date +%s.%N)
+  wall=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.3f", b-a}')
+  local gt pt ptps prtps
+  gt=$(jq -r '.usage.completion_tokens // 0'  <<<"$resp")
+  pt=$(jq -r '.usage.prompt_tokens // 0'      <<<"$resp")
+  ptps=$(jq -r '.timings.predicted_per_second // empty' <<<"$resp")
+  prtps=$(jq -r '.timings.prompt_per_second // empty'   <<<"$resp")
+  [[ -z "$ptps"  ]] && ptps=$(awk -v t="$gt" -v w="$wall" 'BEGIN{printf "%.2f", (w>0)? t/w : 0}')
+  [[ -z "$prtps" ]] && prtps=0
+  echo "$wall $gt $pt $ptps $prtps"
+}
+
+say ""
+say "${C_B}benchmark${C_OFF}  endpoint=$ENDPOINT  runs=$RUNS  max_tokens=$MAXTOK"
+say "${C_DIM}models: ${KEYS[*]}${C_OFF}"
+say ""
+
+RESULTS_JSON="[]"
+printf '%s%-8s %-20s %-11s %6s %9s %9s %7s %7s%s\n' "$C_B" \
+  "key" "model" "quant" "load s" "prompt/s" "gen/s" "RAM MB" "VRAM MB" "$C_OFF"
+printf '%s%s%s\n' "$C_DIM" "$(printf '%.0s-' {1..84})" "$C_OFF"
+
+for key in "${KEYS[@]}"; do
+  # bring it up
+  ld0=$(date +%s.%N)
+  "$MODEL_BIN" "$key" -y >/tmp/bench-$key.log 2>&1
+  if ! wait_healthy 300; then
+    printf '%s %-8s %s%s\n' "$C_R" "$key" "FAILED to come up — see /tmp/bench-$key.log" "$C_OFF"
+    RESULTS_JSON=$(jq --arg k "$key" '. += [{key:$k, error:"failed to start"}]' <<<"$RESULTS_JSON")
+    continue
+  fi
+  ld1=$(date +%s.%N)
+  load_s=$(awk -v a="$ld0" -v b="$ld1" 'BEGIN{printf "%.0f", b-a}')
+
+  one_run >/dev/null 2>&1   # warmup
+
+  gen_list=(); prm_list=(); wall_list=()
+  for ((r=1; r<=RUNS; r++)); do
+    read -r wall gt pt ptps prtps <<<"$(one_run)"
+    [[ "$wall" == "ERR" || -z "${ptps:-}" ]] && { printf '%s %-8s run %d errored%s\n' "$C_Y" "$key" "$r" "$C_OFF"; continue; }
+    gen_list+=("$ptps"); prm_list+=("$prtps"); wall_list+=("$wall")
+    printf '%s   %-8s run %d: %s gen/s, %s prompt/s  (%ss wall, %s tok)%s\n' \
+      "$C_DIM" "$key" "$r" "$(r1 "$ptps")" "$(r1 "$prtps")" "$wall" "$gt" "$C_OFF"
+  done
+  [[ ${#gen_list[@]} -eq 0 ]] && { printf '%s %-8s all runs errored%s\n' "$C_R" "$key" "$C_OFF"; continue; }
+
+  gen_med=$(median "${gen_list[@]}")
+  prm_med=$(median "${prm_list[@]}")
+  ram=$(jarvis_ram_mb); vram=$(jarvis_vram_mb)
+  IFS=$'\t' read -r name quant _ _ < <("$MODEL_BIN" info "$key" 2>/dev/null)
+  [[ -z "${name:-}" ]] && name="$key"
+
+  printf '%s%-8s %-20s %-11s %6s %9s %s%9s%s %7s %7s\n' \
+    "" "$key" "$name" "${quant:--}" "$load_s" "$prm_med" "$C_G" "$gen_med" "$C_OFF" "$ram" "$vram"
+
+  RESULTS_JSON=$(jq \
+    --arg k "$key" --arg n "$name" --arg q "${quant:--}" \
+    --argjson load "$load_s" --argjson gen "$gen_med" --argjson prm "$prm_med" \
+    --arg ram "$ram" --arg vram "$vram" --argjson runs "$(printf '%s\n' "${gen_list[@]}" | jq -sc 'map(. * 10 | round / 10)')" \
+    '. += [{key:$k, model:$n, quant:$q, load_s:$load, gen_tps:$gen, prompt_tps:$prm, host_ram_mb:$ram, vram_mb:$vram, gen_runs:$runs}]' \
+    <<<"$RESULTS_JSON")
+done
+
+say ""
+# ---- write reports ----
+jq -n --arg date "$DATE" --arg prompt "$PROMPT" --argjson maxtok "$MAXTOK" \
+  --argjson runs "$RUNS" --argjson results "$RESULTS_JSON" \
+  '{date:$date, endpoint:"'"$ENDPOINT"'", max_tokens:$maxtok, runs_per_model:$runs, prompt:$prompt, results:$results}' \
+  >"$JSON"
+
+{
+  echo "# Jarvis model benchmark — $DATE"
+  echo
+  echo "- Endpoint: \`$ENDPOINT\` (llama.cpp on jarvis, RTX 5070 Ti 16 GB + 61 GB RAM)"
+  echo "- Prompt: fixed, ~50 tokens in; \`max_tokens=$MAXTOK\`, \`temperature=0\`, non-streaming"
+  echo "- Each model: 1 warmup + $RUNS timed runs; \`gen/s\` and \`prompt/s\` are medians"
+  echo "- Speeds from llama.cpp \`timings\` (server-side; wall-clock fallback)"
+  echo "- \`RAM MB\` / \`VRAM MB\` = total jarvis usage while the model was loaded, not the model's own footprint"
+  echo
+  printf '| %-8s | %-20s | %-11s | %6s | %8s | %7s | %7s | %8s |\n' \
+    key model quant "load s" "prompt/s" "gen/s" "RAM MB" "VRAM MB"
+  printf '|%s|%s|%s|%s|%s|%s|%s|%s|\n' "----------" "----------------------" "-------------" "--------" "----------" "---------" "---------" "----------"
+  jq -r '.results[] | if .error then
+      "| \(.key) | \(.model // "-") | - | - | - | ERROR: \(.error) | - | - |"
+    else
+      "| \(.key) | \(.model) | \(.quant) | \(.load_s) | \(.prompt_tps) | \(.gen_tps) | \(.host_ram_mb) | \(.vram_mb) |"
+    end' "$JSON"
+  echo
+  echo "_Raw: \`$(basename "$JSON")\`_"
+} >"$MD"
+
+say "${C_G}wrote${C_OFF} $MD"
+say "${C_G}wrote${C_OFF} $JSON"
+say ""

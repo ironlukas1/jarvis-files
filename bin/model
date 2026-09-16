@@ -1,0 +1,445 @@
+#!/usr/bin/env bash
+# model — pick a Jarvis model and bring it up end to end.
+set -uo pipefail
+
+REMOTE="${MODEL_REMOTE:-jarvis}"
+TUNNEL="${MODEL_TUNNEL:-llm-tunnel}"
+PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
+OC_DIR="${OC_DIR:-$HOME/.config/opencode}"
+SSH="ssh -o BatchMode=yes -o ConnectTimeout=15"
+
+# Same script runs on a client (drives jarvis over ssh) and on jarvis itself.
+# Deploy:  scp bin/model jarvis:~/.local/bin/model  &&  ssh jarvis chmod 755 ~/.local/bin/model
+IS_LOCAL=0
+[[ "$(hostname 2>/dev/null)" =~ ^(jarvis|jarvis59|192\.168\.100\.59)$ ]] && IS_LOCAL=1
+HOSTLBL='client -> jarvis'
+[[ "$IS_LOCAL" == 1 ]] && HOSTLBL='jarvis (local)'
+
+rsh() { # rsh '<snippet>' — one command, no args
+  if [[ "$IS_LOCAL" == 1 ]]; then bash -c "$1"
+  else $SSH -n "$REMOTE" "$1"; fi
+}
+rexec() { # rexec [args...]  — script on stdin, args as $1..$n
+  if [[ "$IS_LOCAL" == 1 ]]; then bash -s -- "$@"
+  else $SSH "$REMOTE" bash -s -- "$@"; fi
+}
+
+# All local models are llama.cpp GGUFs on jarvis:/mnt/models2, served on :8000.
+# One serves at a time. "q38-q2" is also wired to the systemd user unit
+# llama.service; the rest are started directly by this script.
+#
+# rec: key | name | quant | size | n-cpu-moe | fit-note | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default, else llama-server --reasoning value)
+# All dense qwen35 archs here have 65 blocks. ~14 GB of weights is the safe full-GPU
+# ceiling on this 16 GB card (proven by q38-27b); anything bigger gets partial -ngl
+# so the rest spills to RAM instead of OOMing at startup.
+#
+# huihui-abliterated and 0bserverx-heretic default their chat templates to
+# reasoning_effort=xhigh (always-on, verbose thinking) — that is the slow-response
+# complaint on Jarvis, not GPU speed. Pinned to "off" here so they behave like the
+# other conversational models. See memory: jarvis-smart-home-build.
+MODELS=(
+  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~61 GB|42|fits RAM, tight (llama.service)|/mnt/models2/qwen38-q2kxl/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
+  "q38-27b|Qwen3.8-27B dense|UD-IQ4_XS|~14 GB|0|fits GPU (16 GB) at 16k ctx|/mnt/models2/qwen38-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|16384|99|"
+  "swift|Swift-Qwen3.8-27B|Q4_K_M|18.0 GB|0|~48/65 layers on GPU, rest RAM|/mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf|16384|48|"
+  "gsq-rco|Qwen3.8-27B GSQ-RCO|IQ3_S-mtp|12.1 GB|0|fits GPU (16 GB) fully|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|32768|99|"
+  "huihui-abliterated|Huihui-Qwen3.8-27B abliterated|UD-Q4_K_XL|17.4 GB|0|~50/65 layers on GPU, rest RAM|/mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf|65536|50|off"
+  "0bserverx-heretic|Qwen3.8-27B Heretic|Q4_K_M-multilingual-mtp|17.0 GB|0|~52/65 layers on GPU, rest RAM|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|65536|52|off"
+  "cloud|DeepSeek-V4-Flash|hosted|OpenRouter|-|nothing to start|deepseek/deepseek-v4-flash-0731|-||"
+)
+
+C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_C=$'\e[36m'
+[[ -t 1 ]] || { C_OFF=; C_DIM=; C_B=; C_G=; C_Y=; C_R=; C_C=; }
+
+die()  { printf '%serror:%s %s\n' "$C_R" "$C_OFF" "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+
+# rec fields: 1 key  2 name  3 quant  4 size  5 n-cpu-moe  6 fit-note  7 path/id
+field() { # field <key> <index 1-7>
+  local rec f
+  for rec in "${MODELS[@]}"; do
+    [[ "${rec%%|*}" == "$1" ]] || continue
+    IFS='|' read -r -a f <<<"$rec"
+    printf '%s' "${f[$(($2 - 1))]}"
+    return 0
+  done
+  return 1
+}
+keys() { local rec; for rec in "${MODELS[@]}"; do printf '%s\n' "${rec%%|*}"; done; }
+valid_key() { keys | grep -qx -- "$1"; }
+is_hosted() { [[ "$1" == cloud ]]; }
+
+# ---------- what is actually serving :8000 ----------
+
+# probe() sets ACTIVE (a model key, or "" for nothing, or "unknown:<id>").
+# Endpoint-based: ask :8000 what it serves and map the alias back to a key.
+# No process-name guessing — that is what used to put a phantom dot on dsv4.
+probe() {
+  ACTIVE=""
+  local served
+  served=$(rsh "curl -sf -m 4 http://127.0.0.1:8000/v1/models 2>/dev/null | sed -n 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/p' | head -1" 2>/dev/null)
+  [[ -z "$served" ]] && return 0
+  case "$served" in
+    qwen38|q38-q2|qwen3.8-flash-next)          ACTIVE=q38-q2 ;;
+    q38-27b)                                   ACTIVE=q38-27b ;;
+    swift)                                     ACTIVE=swift ;;
+    gsq-rco)                                   ACTIVE=gsq-rco ;;
+    huihui-abliterated)                        ACTIVE=huihui-abliterated ;;
+    0bserverx-heretic)                         ACTIVE=0bserverx-heretic ;;
+    deepseek-v4-colibri)                       ACTIVE=dsv4 ;;
+    *)                                         ACTIVE="unknown:$served" ;;
+  esac
+}
+active_label() { # pretty text for $ACTIVE
+  case "$ACTIVE" in
+    "")        printf 'nothing on :8000' ;;
+    unknown:*) printf '%s (unrecognised)' "${ACTIVE#unknown:}" ;;
+    *)         printf '%s  %s %s' "$ACTIVE" "$(field "$ACTIVE" 2)" "$(field "$ACTIVE" 3)" ;;
+  esac
+}
+
+# ---------- tunnel ----------
+
+tunnel_up() {
+  [[ "$IS_LOCAL" == 1 ]] && return 0
+  pgrep -f "ssh .*-N.*(llm-tunnel|jarvis-tunnel)" >/dev/null 2>&1 && return 0
+  ss -ltn 2>/dev/null | grep -qE '127\.0\.0\.1:(8000|11434)'
+}
+ensure_tunnel() {
+  [[ "$IS_LOCAL" == 1 ]] && { info "  tunnel      not needed (running on jarvis)"; return 0; }
+  tunnel_up && { info "  tunnel      up (8000, 11434)"; return 0; }
+  ssh -N -f -o BatchMode=yes -o ExitOnForwardFailure=yes "$TUNNEL" 2>/dev/null &&
+    info "  tunnel      started (8000, 11434)" ||
+    printf '  %stunnel      failed — run manually: ssh -N %s%s\n' "$C_Y" "$TUNNEL" "$C_OFF"
+}
+
+# ---------- client config (pi + opencode) ----------
+
+# Both configs are generated from MODELS — one source of truth, no drift.
+write_pi_config() { # write_pi_config <key>
+  local key="$1" model_id
+  model_id=$(field "$key" 7); is_hosted "$key" && model_id="deepseek/deepseek-v4-flash-0731"
+  [[ "$key" == cloud ]] || model_id="$key"
+  [[ -d "$PI_DIR" ]] || { printf '  %spi          %s not present, skipped%s\n' "$C_DIM" "$PI_DIR" "$C_OFF"; return 0; }
+  command -v jq >/dev/null || { printf '  %spi          jq missing, skipped%s\n' "$C_Y" "$C_OFF"; return 0; }
+
+  local models='[]' rec rkey rname rquant
+  for rec in "${MODELS[@]}"; do
+    IFS='|' read -r rkey rname rquant _ _ _ _ <<<"$rec"
+    local id="$rkey" prov="llamacpp"
+    [[ "$rkey" == cloud ]] && { id="deepseek/deepseek-v4-flash-0731"; prov="openrouter"; }
+    models=$(jq --arg i "$id" --arg n "$rname $rquant" --arg p "$prov" \
+      '. += [{id:$i, name:$n, provider:$p}]' <<<"$models")
+  done
+  local tmp; tmp=$(mktemp)
+  jq -n --argjson m "$models" '
+    { providers: {
+        llamacpp: { baseUrl:"http://localhost:8000/v1", api:"openai-completions", apiKey:"local",
+                    models: ($m | map(select(.provider=="llamacpp") | {id:.id, name:.name})) },
+        openrouter: { baseUrl:"https://openrouter.ai/api/v1", api:"openai-completions", apiKey:"env:OPENROUTER_API_KEY",
+                    models: ($m | map(select(.provider=="openrouter") | {id:.id, name:.name})) }
+      } }' >"$tmp" && mv "$tmp" "$PI_DIR/models.json" || { rm -f "$tmp"; printf '  %spi          gen failed%s\n' "$C_Y" "$C_OFF"; return 1; }
+
+  local s="$PI_DIR/settings.json"; [[ -f "$s" ]] || echo '{}' >"$s"
+  local prov=llamacpp; [[ "$key" == cloud ]] && prov=openrouter
+  tmp=$(mktemp)
+  jq --arg p "$prov" --arg m "$model_id" '.defaultProvider=$p | .defaultModel=$m' "$s" >"$tmp" && mv "$tmp" "$s"
+  info "  pi          default -> $prov / $model_id"
+}
+
+write_opencode_config() { # write_opencode_config <key>
+  # Merges into opencode.json rather than overwriting it — preserves any
+  # hand-added providers (e.g. colibri, ollama) and agent blocks.
+  command -v opencode >/dev/null || [[ -d "$OC_DIR" ]] || { return 0; }
+  command -v jq >/dev/null || { printf '  %sopencode    jq missing, skipped%s\n' "$C_Y" "$C_OFF"; return 0; }
+  mkdir -p "$OC_DIR"
+  local rec rkey rname rquant models='{}'
+  for rec in "${MODELS[@]}"; do
+    IFS='|' read -r rkey rname rquant _ _ _ _ <<<"$rec"
+    [[ "$rkey" == cloud ]] && continue
+    models=$(jq --arg k "$rkey" --arg n "$rname $rquant" '. + {($k): {name:$n}}' <<<"$models")
+  done
+  local defmodel="llamacpp/$1"; [[ "$1" == cloud ]] && defmodel="openrouter/deepseek/deepseek-v4-flash-0731"
+  local f="$OC_DIR/opencode.json"
+  [[ -f "$f" ]] || echo '{"$schema":"https://opencode.ai/config.json"}' >"$f"
+  local tmp; tmp=$(mktemp)
+  jq --argjson m "$models" --arg dm "$defmodel" '
+    .["$schema"] //= "https://opencode.ai/config.json"
+    | .model = $dm
+    | .provider.llamacpp.npm = "@ai-sdk/openai-compatible"
+    | .provider.llamacpp.name //= "llama.cpp (jarvis tunnel :8000)"
+    | .provider.llamacpp.options //= { baseURL:"http://localhost:8000/v1", apiKey:"local" }
+    | .provider.llamacpp.models = ((.provider.llamacpp.models // {}) * $m)
+    | .provider.openrouter.npm = "@ai-sdk/openai-compatible"
+    | .provider.openrouter.name //= "OpenRouter"
+    | .provider.openrouter.options //= { baseURL:"https://openrouter.ai/api/v1" }
+    | .provider.openrouter.models = ((.provider.openrouter.models // {}) *
+        { "deepseek/deepseek-v4-flash-0731": { name:"DeepSeek-V4-Flash" } })
+  ' "$f" >"$tmp" && mv "$tmp" "$f" \
+    && info "  opencode    default -> $defmodel (merged; other providers/agents kept)" \
+    || { rm -f "$tmp"; printf '  %sopencode    gen failed%s\n' "$C_Y" "$C_OFF"; }
+}
+
+# ---------- start / stop (systemd user unit + direct) ----------
+
+stop_serving() { # stop whatever holds :8000, quietly
+  rsh 'systemctl --user stop llama.service 2>/dev/null
+       pkill -f "llama-server .*--port 8000" 2>/dev/null
+       pkill -f "coli serve" 2>/dev/null
+       for i in $(seq 1 20); do curl -sf -m2 http://127.0.0.1:8000/v1/models >/dev/null 2>&1 || break; sleep 1; done
+       exit 0' 2>/dev/null
+}
+
+start_unit() { # start q38-q2 via its systemd user unit
+  rexec <<'EOS'
+set -u
+systemctl --user start llama.service || { echo DIED; echo "systemctl --user start llama.service failed"; exit 1; }
+for i in $(seq 1 180); do
+  curl -sf -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1 && { echo; echo READY; exit 0; }
+  systemctl --user is-active llama.service >/dev/null 2>&1 || { echo; echo DIED; journalctl --user -u llama.service -n 15 --no-pager; exit 1; }
+  printf '.'; sleep 5
+done
+echo; echo TIMEOUT; journalctl --user -u llama.service -n 15 --no-pager; exit 1
+EOS
+}
+
+start_direct() { # start_direct <gguf> <n-cpu-moe> <alias> <ctx> <ngl> <reasoning>
+  rexec "$1" "$2" "$3" "$4" "$5" "${6:-}" <<'EOS'
+set -u
+GGUF=$1; MOE=$2; ALIAS=$3; CTX=${4:-32768}; NGL=${5:-99}; REASONING=${6:-}
+LOG="$HOME/logs/model-$ALIAS.log"; mkdir -p ~/logs
+BIN=~/llama.cpp/build-cuda/bin/llama-server
+[ -x "$BIN" ] || { echo "MISSING: $BIN"; exit 1; }
+[ -f "$GGUF" ] || { echo "MISSING: $GGUF"; exit 1; }
+EXTRA=()
+if [ "${MOE:-0}" -gt 0 ] 2>/dev/null; then
+  EXTRA+=(--n-cpu-moe "$MOE")            # MoE experts spill to RAM
+else
+  EXTRA+=(--cache-type-k q8_0 --cache-type-v q8_0)   # dense: shrink KV; partial -ngl spills rest to RAM
+fi
+[ -n "$REASONING" ] && EXTRA+=(--reasoning "$REASONING")
+setsid "$BIN" -m "$GGUF" -ngl "$NGL" "${EXTRA[@]}" \
+  -t 24 -c "$CTX" --parallel 1 --jinja -b 2048 -ub 512 \
+  --host 127.0.0.1 --port 8000 --alias "$ALIAS" \
+  </dev/null >"$LOG" 2>&1 &
+disown 2>/dev/null
+for i in $(seq 1 240); do
+  curl -sf -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1 && { echo; echo READY; exit 0; }
+  pgrep -f "llama-server .*--port 8000" >/dev/null 2>&1 || { echo; echo DIED; tail -20 "$LOG"; exit 1; }
+  printf '.'; sleep 5
+done
+echo; echo TIMEOUT; tail -20 "$LOG"; exit 1
+EOS
+}
+
+# ---------- commands ----------
+
+cmd_list() {
+  probe
+  printf '\n%s%-9s %-22s %-13s %-9s %-8s %s%s\n' "$C_B" "key" "model" "quant" "size" "run?" "memory" "$C_OFF"
+  printf '%s%s%s\n' "$C_DIM" "$(printf '%.0s-' {1..92})" "$C_OFF"
+  local rec key name quant size moe fit mark
+  for rec in "${MODELS[@]}"; do
+    IFS='|' read -r key name quant size moe fit _ <<<"$rec"
+    if [[ "$key" == "$ACTIVE" ]]; then mark="${C_G}*${C_OFF}"; else mark=" "; fi
+    printf '%s %s%-8s%s %-22s %-13s %-9s %s%-8s %s%s\n' \
+      "$mark" "$C_C" "$key" "$C_OFF" "$name" "$quant" "$size" "$C_DIM" "$moe" "$fit" "$C_OFF"
+  done
+  printf '\n%s* = serving :8000 now   ·   run? = --n-cpu-moe value used%s\n\n' "$C_DIM" "$C_OFF"
+}
+
+cmd_status() {
+  probe
+  printf '\n%s%s%s\n' "$C_B" "$HOSTLBL" "$C_OFF"
+  printf '  serving    '
+  if [[ -z "$ACTIVE" ]]; then printf '%snothing on :8000%s\n' "$C_Y" "$C_OFF"
+  else printf '%s%s%s\n' "$C_G" "$(active_label)" "$C_OFF"; fi
+  if [[ "$IS_LOCAL" == 1 ]]; then
+    printf '  tunnel     %sn/a (on jarvis)%s\n' "$C_DIM" "$C_OFF"
+  else
+    printf '  tunnel     '; tunnel_up && printf '%sup%s\n' "$C_G" "$C_OFF" || printf '%sdown%s\n' "$C_Y" "$C_OFF"
+  fi
+  printf '  service    '
+  rsh 'systemctl --user is-active llama.service 2>/dev/null; true'
+  if [[ -f "$PI_DIR/settings.json" ]] && command -v jq >/dev/null; then
+    printf '  pi default '; jq -r '"\(.defaultProvider // "?") / \(.defaultModel // "?")"' "$PI_DIR/settings.json"
+  fi
+  if [[ -f "$OC_DIR/opencode.json" ]] && command -v jq >/dev/null; then
+    printf '  opencode   '; jq -r '.model // "?"' "$OC_DIR/opencode.json"
+  fi
+  echo
+}
+
+cmd_sync() {
+  probe
+  if [[ -z "$ACTIVE" ]]; then
+    info "Nothing serving :8000 — nothing to sync."
+    return 0
+  fi
+  if [[ "$ACTIVE" == unknown:* ]]; then
+    printf '  %sserving %s is not a recognised model key — leaving pi/opencode config untouched.%s\n' \
+      "$C_Y" "${ACTIVE#unknown:}" "$C_OFF"
+    return 1
+  fi
+
+  local oc_current="" pi_current=""
+  [[ -f "$OC_DIR/opencode.json" ]] && command -v jq >/dev/null &&
+    oc_current=$(jq -r '.model // ""' "$OC_DIR/opencode.json" 2>/dev/null)
+  [[ -f "$PI_DIR/settings.json" ]] && command -v jq >/dev/null &&
+    pi_current=$(jq -r '.defaultModel // ""' "$PI_DIR/settings.json" 2>/dev/null)
+
+  local want="llamacpp/$ACTIVE"
+  local oc_ok=1 pi_ok=1
+  [[ -f "$OC_DIR/opencode.json" ]] && [[ "$oc_current" != "$want" ]] && oc_ok=0
+  [[ -f "$PI_DIR/settings.json" ]] && [[ "$pi_current" != "$ACTIVE" ]] && pi_ok=0
+  if [[ "$oc_ok" == 1 && "$pi_ok" == 1 ]]; then
+    info "In sync: :8000 is serving $(active_label), config already matches."
+    return 0
+  fi
+
+  printf '%sDrift detected%s — :8000 is serving %s but config points elsewhere (opencode: %s, pi: %s).\n' \
+    "$C_Y" "$C_OFF" "$ACTIVE" "${oc_current:-unset}" "${pi_current:-unset}"
+  ensure_tunnel
+  write_pi_config "$ACTIVE"
+  write_opencode_config "$ACTIVE"
+  info "Reconciled to $ACTIVE."
+}
+
+cmd_stop() {
+  probe
+  [[ -z "$ACTIVE" ]] && { info "Nothing serving :8000."; }
+  info "Stopping (llama.service + any llama-server on :8000)..."
+  stop_serving
+  probe
+  [[ -z "$ACTIVE" ]] && info "Stopped." || info "Still up: $(active_label)"
+}
+
+cmd_logs() {
+  local t='journalctl --user -u llama.service -n 80 -f'
+  [[ "$IS_LOCAL" == 1 ]] && bash -c "$t" || $SSH -t "$REMOTE" "$t"
+}
+
+pick() {
+  local rec key name quant size fit line choice
+  local -a lines=() ks=()
+  probe
+  for rec in "${MODELS[@]}"; do
+    IFS='|' read -r key name quant size _ fit _ <<<"$rec"
+    local mark=" "; [[ "$key" == "$ACTIVE" ]] && mark="*"
+    lines+=("$(printf '%s %-8s  %-20s %-12s %-8s  %s' "$mark" "$key" "$name" "$quant" "$size" "$fit")")
+    ks+=("$key")
+  done
+  if command -v fzf >/dev/null && [[ -t 0 && -t 1 ]]; then
+    line=$(printf '%s\n' "${lines[@]}" | fzf --ansi --height=~14 --reverse --no-multi \
+        --prompt='model> ' --header='* = serving now   ·   enter = switch, esc = cancel') || return 1
+    PICK=$(sed -E 's/^[* ] *//' <<<"$line" | awk '{print $1}')
+  else
+    echo; printf '%sModels%s\n\n' "$C_B" "$C_OFF"
+    local i=1; for line in "${lines[@]}"; do printf '  %d) %s\n' "$i" "$line"; i=$((i + 1)); done; echo
+    read -r -p "Pick [1-${#ks[@]}], q to quit: " choice
+    [[ "$choice" == q || -z "$choice" ]] && return 1
+    [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ks[@]})) || die "bad choice: $choice"
+    PICK="${ks[$((choice - 1))]}"
+  fi
+  [[ -n "${PICK:-}" ]] || return 1
+}
+
+activate() { # activate <key>
+  local key="$1" name quant moe path ctx reasoning
+  name=$(field "$key" 2); quant=$(field "$key" 3); moe=$(field "$key" 5)
+  path=$(field "$key" 7); ctx=$(field "$key" 8); ngl=$(field "$key" 9); reasoning=$(field "$key" 10)
+
+  if [[ "$key" == cloud ]]; then
+    info ""; info "  remote      nothing to start (OpenRouter)"
+    write_pi_config cloud; write_opencode_config cloud; done_banner cloud; return 0
+  fi
+
+  probe
+  if [[ "$ACTIVE" == "$key" ]]; then
+    info ""; info "$name $quant is already serving :8000."
+    ensure_tunnel; write_pi_config "$key"; write_opencode_config "$key"; done_banner "$key"; return 0
+  fi
+
+  if [[ -n "$ACTIVE" && "$ASSUME_YES" != 1 ]]; then
+    printf '\n%s%s is on :8000 and will be stopped.%s\n' "$C_Y" "$(active_label)" "$C_OFF"
+    read -r -p "Switch to $name $quant? [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { info "Cancelled."; return 1; }
+  fi
+
+  printf '\n%sStarting %s %s%s\n' "$C_B" "$name" "$quant" "$C_OFF"
+  stop_serving
+  printf '  loading     '
+  local out rc=0
+  if [[ "$key" == q38-q2 ]]; then
+    out=$(start_unit) || rc=$?
+  else
+    out=$(start_direct "$path" "$moe" "$key" "$ctx" "$ngl" "$reasoning") || rc=$?
+  fi
+  if [[ $rc -ne 0 ]]; then
+    printf '\n%sFailed to start %s %s.%s\n\n%s\n\n' "$C_R" "$name" "$quant" "$C_OFF" "$out"
+    info "Logs: model logs"; return 1
+  fi
+  printf '\r  loaded      %sready%s                          \n' "$C_G" "$C_OFF"
+  ensure_tunnel; write_pi_config "$key"; write_opencode_config "$key"; done_banner "$key"
+}
+
+done_banner() { # done_banner <key>
+  local key="$1" name quant
+  name=$(field "$key" 2); quant=$(field "$key" 3)
+  printf '\n%s%s %s is live.%s\n\n' "$C_G" "$name" "$quant" "$C_OFF"
+  if [[ "$key" == cloud ]]; then
+    printf '  opencode -m openrouter/deepseek/deepseek-v4-flash-0731\n'
+    printf '  pi --provider openrouter --model deepseek/deepseek-v4-flash-0731\n\n'
+  else
+    printf '  opencode -m llamacpp/%s\n' "$key"
+    printf '  pi --provider llamacpp --model %s\n' "$key"
+    printf '  %s(both are now the default)%s\n\n' "$C_DIM" "$C_OFF"
+  fi
+}
+
+usage() {
+  cat <<EOF
+model — pick a Jarvis model and bring it up
+
+  model              interactive picker
+  model <key>        switch straight to that model
+  model list         show models (* = serving :8000)
+  model status       what is serving, tunnel, pi/opencode default
+  model stop         stop llama.service + any llama-server on :8000
+  model logs         follow llama.service journal
+  model tunnel       ensure the local ssh tunnel is up
+  model sync         reconcile pi/opencode config to whatever is actually serving :8000
+
+  -y, --yes          do not prompt before switching
+  -h, --help         this
+
+Keys: $(keys | tr '\n' ' ')
+EOF
+}
+
+# ---------- main ----------
+
+ASSUME_YES=0; ARGS=()
+for a in "$@"; do
+  case "$a" in
+    -y | --yes) ASSUME_YES=1 ;;
+    -h | --help) usage; exit 0 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+
+cmd="${ARGS[0]:-}"
+case "$cmd" in
+  "")                    pick && activate "$PICK" ;;
+  list | ls | -l)        cmd_list ;;
+  info)                  valid_key "${ARGS[1]:-}" || die "usage: model info <key>"
+                         printf '%s\t%s\t%s\t%s\n' "$(field "${ARGS[1]}" 2)" \
+                           "$(field "${ARGS[1]}" 3)" "$(field "${ARGS[1]}" 4)" "$(field "${ARGS[1]}" 8)" ;;
+  status | st)           cmd_status ;;
+  stop)                  cmd_stop ;;
+  logs | log)            cmd_logs ;;
+  tunnel)                ensure_tunnel ;;
+  sync)                  cmd_sync ;;
+  *)
+    valid_key "$cmd" || { printf '%sunknown model or command: %s%s\n\n' "$C_R" "$cmd" "$C_OFF"; usage; exit 1; }
+    activate "$cmd" ;;
+esac

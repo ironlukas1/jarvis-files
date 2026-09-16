@@ -1,0 +1,904 @@
+#!/usr/bin/env python3
+"""jarvismon - temps + utilisation for the Colibri box.
+
+Uses `sensors -j` (lm-sensors) when available, falls back to raw /sys/class/hwmon.
+Read-only: touches nothing but /proc, /sys, nvidia-smi and Colibri's /health.
+
+  jarvismon [interval]      default 2s
+  jarvismon -1              print one frame and exit (no clear, pipe-friendly)
+  jarvismon --all           show every sensor chip, not just the interesting ones
+"""
+import os, sys, time, glob, json, shutil, subprocess, re
+
+args = [a for a in sys.argv[1:]]
+ONESHOT = "-1" in args
+SHOW_ALL = "--all" in args
+nums = [a for a in args if a.replace(".", "", 1).isdigit()]
+INTERVAL = float(nums[0]) if nums else 2.0
+
+R, Y, G, C, M, D, B = ("\033[31m", "\033[33m", "\033[32m",
+                       "\033[36m", "\033[35m", "\033[2m", "\033[1m")
+N = "\033[0m"
+HAS_SENSORS = shutil.which("sensors") is not None
+
+
+def col(v, warn, crit):
+    return R if v >= crit else (Y if v >= warn else G)
+
+
+def bar(pct, w=26):
+    pct = max(0.0, min(100.0, pct))
+    f = int(pct / 100 * w)
+    return f"{col(pct,70,90)}{'█'*f}{D}{'─'*(w-f)}{N}"
+
+
+def read(p, default=None):
+    try:
+        with open(p) as fh:
+            return fh.read().strip()
+    except Exception:
+        return default
+
+
+# ---------------------------------------------------------------- nvme naming
+def nvme_map():
+    """{'nvme-pci-8100': ('nvme0n1', 'KINGSTON ...', mounted_bool)} best effort."""
+    out = {}
+    mounts = read("/proc/mounts", "")
+    for ctrl in sorted(glob.glob("/sys/class/nvme/nvme*")):
+        pci = os.path.basename(os.path.realpath(os.path.join(ctrl, "device")))
+        try:
+            bus, dev = pci.split(":")[1], pci.split(":")[2].split(".")[0]
+            key = f"nvme-pci-{bus}{dev}"
+        except Exception:
+            continue
+        model = (read(os.path.join(ctrl, "model")) or "?").strip()
+        blk = sorted(glob.glob(os.path.join(ctrl, "nvme*n*")))
+        name = os.path.basename(blk[0]) if blk else os.path.basename(ctrl)
+        out[key] = (name, model, name in mounts or f"/dev/{name}" in mounts)
+    return out
+
+
+NVME = nvme_map()
+
+
+# ---------------------------------------------------------------- sensor read
+def sensors_json():
+    try:
+        r = subprocess.run(["sensors", "-j"], capture_output=True, text=True, timeout=4)
+        if r.returncode != 0:
+            return None
+        try:
+            return json.loads(r.stdout)
+        except json.JSONDecodeError:
+            return json.loads(re.sub(r",(\s*[}\]])", r"\1", r.stdout))
+    except Exception:
+        return None
+
+
+def hwmon_json():
+    """Fallback shaped like sensors -j."""
+    out = {}
+    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        chip = read(f"{d}/name", "?")
+        ent = {}
+        for f in sorted(glob.glob(f"{d}/temp*_input")):
+            base = f[:-6]
+            label = read(base + "_label") or os.path.basename(base)
+            fields = {"temp_input": int(read(f, 0)) / 1000.0}
+            for suf in ("max", "crit"):
+                v = read(f"{base}_{suf}")
+                if v:
+                    fields[f"temp_{suf}"] = int(v) / 1000.0
+            ent[label] = fields
+        if ent:
+            out[chip] = ent
+    return out
+
+
+def collect_temps():
+    """-> ({chip: [(label, value, max, crit)]}, source)"""
+    raw = sensors_json() if HAS_SENSORS else None
+    src = "sensors"
+    if raw is None:
+        raw, src = hwmon_json(), "hwmon"
+    out = {}
+    for chip, body in (raw or {}).items():
+        if not isinstance(body, dict):
+            continue
+        items = []
+        for label, fields in body.items():
+            if not isinstance(fields, dict):
+                continue
+            val = mx = crit = None
+            for k, v in fields.items():
+                if not isinstance(v, (int, float)) or "temp" not in k:
+                    continue
+                if k.endswith("_input"):
+                    val = float(v)
+                elif k.endswith("_max"):
+                    mx = float(v)
+                elif k.endswith("_crit"):
+                    crit = float(v)
+            if val is not None:
+                items.append((label, val, mx, crit))
+        if items:
+            out[chip] = items
+    return out, src
+
+
+# ---------------------------------------------------------------- system stats
+def cpu_times():
+    v = [int(x) for x in read("/proc/stat", "").split("\n")[0].split()[1:]]
+    return sum(v), v[3] + v[4]
+
+
+def disk_sectors():
+    out = {}
+    for line in read("/proc/diskstats", "").split("\n"):
+        f = line.split()
+        if len(f) > 9 and f[2].startswith("nvme") and "p" not in f[2]:
+            out[f[2]] = (int(f[5]), int(f[9]))
+    return out
+
+
+def nvme_mounts():
+    """{'nvme0n1': ['/', '/boot']} - lsblk lists LVM/partition children too."""
+    out = {}
+    for disk in sorted({v[0] for v in NVME.values()}):
+        mp = []
+        try:
+            o = subprocess.run(["lsblk", "-ln", "-o", "MOUNTPOINTS", "/dev/" + disk],
+                               capture_output=True, text=True, timeout=3).stdout
+            for line in o.split(chr(10)):
+                p = line.strip()
+                if p.startswith("/") and p not in mp:
+                    mp.append(p)
+        except Exception:
+            pass
+        out[disk] = mp
+    return out
+
+
+NVME_MNT = nvme_mounts()
+
+
+def disk_usage(paths):
+    """(used, total) bytes across a disk's filesystems, each counted once."""
+    tot = used = 0
+    seen = set()
+    for p in paths:
+        try:
+            st = os.statvfs(p)
+        except Exception:
+            continue
+        key = (st.f_blocks, st.f_frsize)
+        if not st.f_blocks or key in seen:
+            continue
+        seen.add(key)
+        tot += st.f_blocks * st.f_frsize
+        used += (st.f_blocks - st.f_bfree) * st.f_frsize
+    return used, tot
+
+
+def net_bytes():
+    out = {}
+    for line in read("/proc/net/dev", "").split(chr(10))[2:]:
+        if ":" not in line:
+            continue
+        name, rest = line.split(":", 1)
+        name = name.strip()
+        if name == "lo" or name.startswith(("veth", "docker", "br-", "virbr", "tun")):
+            continue
+        f = rest.split()
+        if len(f) >= 9:
+            out[name] = (int(f[0]), int(f[8]))
+    return out
+
+
+def net_info():
+    """{'enp5s0': [operstate, link_mbit, ipv4]} - read once, rarely changes."""
+    out = {}
+    for p in sorted(glob.glob("/sys/class/net/*")):
+        dev = os.path.basename(p)
+        if dev == "lo" or dev.startswith(("veth", "docker", "br-", "virbr", "tun")):
+            continue
+        st = (read(os.path.join(p, "operstate")) or "?").strip()
+        try:
+            spd = int(read(os.path.join(p, "speed")) or 0)
+        except ValueError:
+            spd = 0
+        out[dev] = [st, spd, ""]
+    try:
+        o = subprocess.run(["ip", "-o", "-4", "addr", "show"],
+                           capture_output=True, text=True, timeout=2).stdout
+        for line in o.split(chr(10)):
+            f = line.split()
+            if len(f) > 3 and f[1] in out:
+                out[f[1]][2] = f[3]
+    except Exception:
+        pass
+    return out
+
+
+NETIF = net_info()
+
+
+def _hr(b):
+    for u in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if b < 1024 or u == "TiB":
+            return f"{b:.1f} {u}"
+        b /= 1024
+
+
+def rapl():
+    out = {}
+    for d in glob.glob("/sys/class/powercap/intel-rapl:*"):
+        if ":" in os.path.basename(d)[len("intel-rapl:"):]:
+            continue
+        n, e = read(f"{d}/name"), read(f"{d}/energy_uj")
+        if n and e:
+            out[n] = int(e)
+    return out
+
+
+def nvidia():
+    try:
+        q = ("name,temperature.gpu,utilization.gpu,memory.used,memory.total,"
+             "power.draw,power.limit,fan.speed,clocks.sm")
+        r = subprocess.run(["nvidia-smi", f"--query-gpu={q}",
+                            "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=4)
+        if r.returncode:
+            return None
+        return [x.strip() for x in r.stdout.strip().split("\n")[0].split(",")]
+    except Exception:
+        return None
+
+
+def meminfo():
+    m = {}
+    for line in read("/proc/meminfo", "").split("\n"):
+        p = line.split(":")
+        if len(p) == 2:
+            m[p[0]] = int(p[1].split()[0]) * 1024
+    return m
+
+
+def scheduler():
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2) as r:
+            return json.load(r).get("scheduler")
+    except Exception:
+        return None
+
+
+_MODEL_CACHE = {"t": 0.0, "colibri": None}
+
+
+def colibri_model():
+    """(model_id, weights_path) from Colibri, cached 30 s."""
+    now = time.time()
+    if now - _MODEL_CACHE["t"] < 30:
+        return _MODEL_CACHE["colibri"]
+    name = path = None
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:8000/v1/models",
+                                    timeout=2) as r:
+            data = json.load(r).get("data") or []
+        if data:
+            name = data[0].get("id")
+    except Exception:
+        pass
+    try:
+        for p in glob.glob("/proc/[0-9]*/cmdline"):
+            c = (read(p, "") or "").split("\0")
+            if "--model" in c and "serve" in c:
+                i = c.index("--model")
+                if i + 1 < len(c):
+                    path = c[i + 1]
+                break
+    except Exception:
+        pass
+    _MODEL_CACHE["t"] = now
+    _MODEL_CACHE["colibri"] = (name, path) if (name or path) else None
+    return _MODEL_CACHE["colibri"]
+
+
+def ollama_ps():
+    """Resident models: [(name, params, quant, vram, total, until)]."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/ps",
+                                    timeout=2) as r:
+            models = json.load(r).get("models") or []
+    except Exception:
+        return None
+    out = []
+    for m in models:
+        d = m.get("details") or {}
+        out.append((m.get("name", "?"), d.get("parameter_size", "?"),
+                    d.get("quantization_level", "?"),
+                    (m.get("size_vram") or 0) / 1e9,
+                    (m.get("size") or 0) / 1e9,
+                    (m.get("expires_at") or "")[11:19]))
+    return out
+
+
+_ACT_CACHE = {"t": 0.0, "v": None}
+TFMT = "%H:%M:%S"
+JUNK = ("GET /health", "GET /v1/models", "GET /api/ps",
+        "GET /api/tags", "/api/version")
+
+
+def _journal(args, limit=4000):
+    """Recent journal lines as [(datetime, message)], oldest first."""
+    import datetime
+    try:
+        p = subprocess.run(["journalctl"] + args +
+                           ["-n", str(limit), "--no-pager",
+                            "-o", "short-iso", "--since", "-6h"],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    if p.returncode != 0:
+        return None
+    out = []
+    for ln in p.stdout.split("\n"):
+        if not ln or "]: " not in ln:
+            continue
+        msg = ln.split("]: ", 1)[1]
+        if any(j in msg for j in JUNK):
+            continue
+        try:
+            ts = datetime.datetime.strptime(ln.split(" ", 1)[0],
+                                            "%Y-%m-%dT%H:%M:%S%z")
+        except Exception:
+            continue
+        out.append((ts, msg))
+    return out
+
+
+def _ago(ts):
+    import datetime
+    s = int((datetime.datetime.now(ts.tzinfo) - ts).total_seconds())
+    if s < 90:
+        return "%ds" % s
+    if s < 5400:
+        return "%dm%02ds" % (s // 60, s % 60)
+    return "%dh%02dm" % (s // 3600, s % 3600 // 60)
+
+
+def _dur(d):
+    """GIN prints full float precision; keep it short."""
+    for unit in ("ms", "us", "s"):
+        if d.endswith(unit):
+            try:
+                return "%.2f%s" % (float(d[:-len(unit)]), unit)
+            except ValueError:
+                return d
+    return d
+
+
+def ai_activity():
+    """What Colibri and Ollama have been doing, from journald. Cached 5 s."""
+    now = time.time()
+    if now - _ACT_CACHE["t"] < 2:
+        return _ACT_CACHE["v"]
+    res = {}
+
+    cj = _journal(["--user", "-u", "colibri"])
+    if cj is not None:
+        keep = [(t, m) for t, m in cj
+                if "[V4]" in m or "v4_ckpt" in m or "completions" in m
+                or " 500 " in m or "error" in m.lower()]
+        c = {"events": keep[-3:], "prompt": None, "ctx": None, "cap": None,
+             "started": None, "done": None}
+        for ts, m in cj:
+            if "clamped to" in m and "context" in m:
+                try:
+                    c["cap"] = m.split("clamped to", 1)[1].split()[0]
+                    tail = m.split("(context", 1)[1]
+                    c["ctx"] = tail.split("-", 1)[0].strip()
+                    c["prompt"] = (tail.split("prompt", 1)[1]
+                                   .split(")")[0].strip())
+                except Exception:
+                    pass
+            if "[V4]" in m or "v4_ckpt" in m:
+                c["started"] = ts
+            if "completions" in m:
+                c["done"] = ts
+        res["colibri"] = c
+
+    oj = _journal(["-u", "ollama"])
+    if oj is not None:
+        o = {"last": None, "when": None}
+        for ts, m in oj:
+            if "[GIN]" not in m or "POST" not in m:
+                continue
+            parts = [x.strip() for x in m.split("|")]
+            if len(parts) < 5:
+                continue
+            o["last"] = (" ".join(parts[4].replace(chr(34), "").split()) + "  "
+                         + parts[1] + "  " + _dur(parts[2]))
+            o["when"] = ts
+        res["ollama"] = o
+
+    _ACT_CACHE["t"] = now
+    _ACT_CACHE["v"] = res or None
+    return _ACT_CACHE["v"]
+
+
+LLAMA_PORTS = (8000, 8010, 8020)
+_LS_CACHE = {}
+
+
+def llama_server(port=8000):
+    """llama.cpp on :port: alias, quant, weights, per-slot state. 2 s cache."""
+    now = time.time()
+    c = _LS_CACHE.get(port)
+    if c and now - c["t"] < 2:
+        return c["v"]
+    out = None
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/props",
+                                    timeout=2) as r:
+            p = json.load(r)
+        if "model_alias" in p or "model_path" in p:
+            _g = p.get("default_generation_settings") or {}
+            out = {"nctx": _g.get("n_ctx") or 0,
+                   "npred": (_g.get("params") or {}).get("n_predict"),
+                   "build": p.get("build_info") or "",
+                   "alias": p.get("model_alias") or "?",
+                   "ftype": p.get("model_ftype") or "",
+                   "path": p.get("model_path") or "",
+                   "total": p.get("total_slots") or 0,
+                   "sleeping": bool(p.get("is_sleeping")),
+                   "slots": []}
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/slots",
+                                            timeout=2) as r:
+                    for sl in json.load(r):
+                        out["slots"].append(
+                            {"id": sl.get("id"),
+                             "busy": bool(sl.get("is_processing")),
+                             "ctx": sl.get("n_ctx") or 0,
+                             "prompt": sl.get("n_prompt_tokens") or 0,
+                             "cached": sl.get("n_prompt_tokens_cache") or 0,
+                             "fresh": sl.get("n_prompt_tokens_processed") or 0,
+                             "npred": (sl.get("params") or {}).get("n_predict") or 0})
+            except Exception:
+                pass
+    except Exception:
+        out = None
+    _LS_CACHE[port] = {"t": now, "v": out}
+    return out
+
+
+_RATE_FILE = "/tmp/jarvismon-llama-rate.json"
+
+
+_ARGS_CACHE = {}
+
+_ARG_MAP = {"-ngl": "ngl", "--gpu-layers": "ngl", "--n-gpu-layers": "ngl",
+            "--n-cpu-moe": "n-cpu-moe", "-ncmoe": "n-cpu-moe",
+            "-t": "t", "--threads": "t",
+            "-c": "c", "--ctx-size": "c",
+            "-b": "b", "--batch-size": "b",
+            "-ub": "ub", "--ubatch-size": "ub",
+            "--parallel": "par", "-np": "par",
+            "--spec-type": "spec", "--spec-draft-n-max": "spec-n",
+            "-md": "draft", "--model-draft": "draft",
+            "-ngld": "ngld", "--n-gpu-layers-draft": "ngld",
+            "-lm": "load", "--load-mode": "load"}
+
+
+def llama_args(port):
+    """Spustovacie prepinace llama-servera na :port, z /proc. 10 s cache."""
+    now = time.time()
+    c = _ARGS_CACHE.get(port)
+    if c and now - c["t"] < 10:
+        return c["v"]
+    out = None
+    for d in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            raw = open(d, "rb").read()
+        except Exception:
+            continue
+        argv = [a.decode("utf-8", "replace") for a in raw.split(b"\x00") if a]
+        if not argv or "llama-server" not in argv[0]:
+            continue
+        if str(port) not in argv:
+            continue
+        got, flags = {}, []
+        for i, a in enumerate(argv):
+            if a in _ARG_MAP and i + 1 < len(argv):
+                got[_ARG_MAP[a]] = argv[i + 1]
+            elif a in ("--jinja", "--no-mmap", "--mlock", "--flash-attn"):
+                flags.append(a.lstrip("-"))
+        got["_flags"] = flags
+        out = got
+        break
+    _ARGS_CACHE[port] = {"t": now, "v": out}
+    return out
+
+
+def llama_rate(slots, port=8000):
+    """Decode rate + ETA per slot. State lives in a file because each
+    `jarvismon -1` frame is a new process and in-memory history is lost."""
+    try:
+        st = json.load(open(_RATE_FILE))
+    except Exception:
+        st = {}
+    now, out = time.time(), {}
+    for sl in slots:
+        key = "%s:%s" % (port, sl["id"])
+        done = max(0, sl["prompt"] - sl["fresh"])
+        prev = st.get(key) or {}
+        if not sl["busy"]:
+            st[key] = {"t": now, "done": done, "rate": 0.0}
+            continue
+        rate = prev.get("rate") or 0.0
+        dt = now - (prev.get("t") or 0)
+        dd = done - (prev.get("done") or 0)
+        if dt >= 1.0 and dd > 0:
+            inst = dd / dt
+            rate = inst if rate <= 0 else 0.7 * rate + 0.3 * inst
+        st[key] = {"t": now, "done": done, "rate": rate}
+        target = sl.get("npred") or 0
+        if target <= 0 or target > sl["ctx"]:
+            target = sl["ctx"]
+        eta = (target - done) / rate if rate > 0.05 and target > done else None
+        out[sl["id"]] = (done, target, rate, eta)
+    try:
+        json.dump(st, open(_RATE_FILE, "w"))
+    except Exception:
+        pass
+    return out
+
+
+def _eta_txt(sec):
+    if sec is None:
+        return "?"
+    sec = int(sec)
+    if sec >= 3600:
+        return "%dh%02dm" % (sec // 3600, (sec % 3600) // 60)
+    if sec >= 60:
+        return "%dm%02ds" % (sec // 60, sec % 60)
+    return "%ds" % sec
+
+
+def cpu_freq():
+    f = [int(x) for x in (read(p) for p in
+         glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq")) if x]
+    mx = read("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+    return (sum(f)/len(f)/1000 if f else 0), (int(mx)/1000 if mx else 0)
+
+
+def throttle():
+    c = read("/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count")
+    t = read("/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_total_time_ms")
+    return (int(c) if c else 0), (int(t) if t else 0)
+
+
+# ---------------------------------------------------------------- chip display
+def chip_label(chip):
+    if chip.startswith("nvme"):
+        if chip in NVME:
+            name, model, mounted = NVME[chip]
+            tag = "" if mounted else f" {D}(unmounted){N}"
+            return f"{name} · {model[:22]}{tag}"
+        return chip
+    if chip.startswith("coretemp"):
+        return "CPU package + cores"
+    if chip.startswith("spd5118"):
+        return "DDR5 DIMM"
+    if chip.startswith("gigabyte_wmi"):
+        return "motherboard (gigabyte_wmi)"
+    if chip.startswith("r8169"):
+        return "ethernet controller"
+    if chip.startswith("acpitz"):
+        return "ACPI thermal zone"
+    if chip.startswith("acpi_fan"):
+        return "ACPI fan"
+    return chip
+
+
+NOISY = ("acpitz", "acpi_fan", "gigabyte_wmi")
+
+prev_cpu, prev_disk, prev_thr = cpu_times(), disk_sectors(), throttle()
+prev_net = net_bytes()
+prev_rapl = rapl()
+prev_t = time.time()
+if ONESHOT:
+    time.sleep(0.4)
+
+
+def frame():
+    global prev_cpu, prev_disk, prev_thr, prev_rapl, prev_t, prev_net
+    now = time.time()
+    dt = max(now - prev_t, 1e-6)
+
+    cur_cpu = cpu_times()
+    dtot, didle = cur_cpu[0]-prev_cpu[0], cur_cpu[1]-prev_cpu[1]
+    cpu_pct = 100.0*(1-didle/dtot) if dtot else 0.0
+
+    cur_disk = disk_sectors()
+    rates = {}
+    for dev, (r, w) in cur_disk.items():
+        pr, pw = prev_disk.get(dev, (r, w))
+        rates[dev] = ((r-pr)*512/1e6/dt, (w-pw)*512/1e6/dt)
+
+    cur_thr = throttle()
+    thr_ev, thr_ms = cur_thr[0]-prev_thr[0], cur_thr[1]-prev_thr[1]
+
+    cur_rapl = rapl()
+    watts = {k: (cur_rapl[k]-prev_rapl.get(k, cur_rapl[k]))/1e6/dt
+             for k in cur_rapl if k in prev_rapl}
+
+    cur_net = net_bytes()
+    nrates = {}
+    for dev, (rx, tx) in cur_net.items():
+        prx, ptx = prev_net.get(dev, (rx, tx))
+        nrates[dev] = (max(0, rx - prx) / dt, max(0, tx - ptx) / dt, rx, tx)
+    prev_net = cur_net
+    prev_cpu, prev_disk, prev_thr, prev_rapl, prev_t = \
+        cur_cpu, cur_disk, cur_thr, cur_rapl, now
+
+    temps, src = collect_temps()
+    fcur, fmax = cpu_freq()
+    m = meminfo()
+    used = m.get("MemTotal", 0) - m.get("MemAvailable", 0)
+    mem_pct = 100.0*used/m["MemTotal"] if m.get("MemTotal") else 0
+    g, sch = nvidia(), scheduler()
+
+    buf = []
+    if not ONESHOT:
+        buf.append(chr(27) + "[H")
+    buf.append(f"{B}jarvismon{N}  {D}{time.strftime('%H:%M:%S')} · {src} · "
+               f"{'one-shot' if ONESHOT else f'every {INTERVAL}s · ctrl-c to quit'}{N}\n")
+
+    # ---- CPU
+    core = temps.get(next((c for c in temps if c.startswith("coretemp")), ""), [])
+    pkg = next((t for t in core if "Package" in t[0]), None)
+    cores = [t for t in core if t[0].startswith("Core")]
+    pt = pkg[1] if pkg else (max((c[1] for c in cores), default=0))
+    pc = (pkg[3] if pkg and pkg[3] else 105)
+    pm = (pkg[2] if pkg and pkg[2] else 85)
+    pw = watts.get("package-0")
+    line = (f"{B}CPU{N}   {bar(cpu_pct)} {cpu_pct:5.1f}%   "
+            f"{col(pt,pm,pc-6)}{pt:5.1f}°C{N}{D}/{pc:.0f}{N}   "
+            f"{fcur:.0f}/{fmax:.0f} MHz")
+    if pw:
+        line += f"   {M}{pw:.0f}W{N}"
+    buf.append(line)
+    if cores:
+        hot = sorted(cores, key=lambda x: -x[1])[:4]
+        buf.append(f"{D}      hottest: " + "  ".join(f"{c[0]}={c[1]:.0f}°" for c in hot) + N)
+    if thr_ev:
+        buf.append(f"      {R}⚠ THROTTLING{N}  +{thr_ev} events, {thr_ms}ms in {dt:.0f}s")
+
+    # ---- GPU
+    if g:
+        name, gt, gu, gmu, gmt, gp, gpl, gf, gclk = g
+        gtf, guf = float(gt), float(gu)
+        buf.append(f"\n{B}GPU{N}   {bar(guf)} {guf:5.1f}%   "
+                   f"{col(gtf,75,85)}{gtf:5.1f}°C{N}   {gp}/{gpl}W  fan {gf}%  {gclk}MHz")
+        buf.append(f"{D}      {name} · VRAM {int(gmu)/1024:.1f}/{int(gmt)/1024:.1f} GiB{N}")
+
+    # ---- RAM (with DIMM temps)
+    buf.append(f"\n{B}RAM{N}   {bar(mem_pct)} {mem_pct:5.1f}%   "
+               f"{used/2**30:.1f}/{m.get('MemTotal',0)/2**30:.1f} GiB")
+    _cache = m.get("Cached", 0) + m.get("Buffers", 0)
+    _free  = m.get("MemFree", 0)
+    buf.append(f"{D}      anon {used/2**30:5.1f}  |  cache {_cache/2**30:5.1f} (mmap models)"
+               f"  |  free {_free/2**30:5.1f} GiB{N}")
+    dimms = [t for c in temps if c.startswith("spd5118") for t in temps[c]]
+    if dimms:
+        buf.append(f"{D}      DIMMs: " +
+                   "  ".join(f"{col(v,55,75)}{v:.0f}°C{N}{D}" for _, v, _, _ in dimms) + N)
+
+    # ---- Disks, one line per physical drive, with its own temp
+    buf.append(f"\n{B}DISKS{N}")
+    for chip in sorted(c for c in temps if c.startswith("nvme")):
+        name, model, mounted = NVME.get(chip, (chip, "?", True))
+        rd, wr = rates.get(name, (0.0, 0.0))
+        comp = next((t for t in temps[chip] if "Composite" in t[0]), None)
+        tv = comp[1] if comp else 0
+        tc = comp[3] if comp and comp[3] else 85
+        others = [f"{t[0]}={t[1]:.0f}°" for t in temps[chip] if "Composite" not in t[0]]
+        tag = "" if mounted else f"  {Y}unmounted{N}"
+        du_used, du_tot = disk_usage(NVME_MNT.get(name, []))
+        if du_tot:
+            pu = 100.0 * du_used / du_tot
+            cap = (f"   {col(pu, 80, 92)}{pu:3.0f}%{N} {D}({_hr(du_used)}"
+                   f" / {_hr(du_tot)}){N}")
+        else:
+            cap = f"   {D}(bez FS){N}"
+        buf.append(f"  {name:<8} {col(tv,tc-25,tc-10)}{tv:5.1f}°C{N}{D}/{tc:.0f}{N}  "
+                   f"read {C}{rd:7.0f}{N} MB/s  write {wr:6.0f} MB/s{tag}" + cap)
+        buf.append(f"{D}           {model[:34]}" + ("  " + " ".join(others) if others else "") + N)
+
+    # ---- LAN
+    if nrates:
+        buf.append(chr(10) + f"{B}LAN{N}")
+        for dev in sorted(nrates):
+            drx, dtx, trx, ttx = nrates[dev]
+            st, spd, ip = NETIF.get(dev, ["?", 0, ""])
+            link = f"{spd} Mb/s" if spd > 0 else "-"
+            col_st = G if st == "up" else D
+            buf.append(f"  {dev:<9} {col_st}{st:<5}{N} {D}{link:>9}{N}  "
+                       f"{C}{(ip or chr(45)):<18}{N}"
+                       f"dn {drx/1e6:7.2f} MB/s   up {dtx/1e6:7.2f} MB/s")
+            pct = 100.0 * (drx + dtx) * 8 / (spd * 1e6) if spd > 0 else 0
+            tail = f"   linka {pct:.1f}%" if spd > 0 else ""
+            buf.append(f"{D}            od bootu  dn {_hr(trx):>9}  up {_hr(ttx):>9}{tail}{N}")
+
+    # ---- Everything else lm-sensors knows
+    extra = [c for c in temps
+             if not c.startswith(("coretemp", "nvme", "spd5118"))
+             and (SHOW_ALL or not c.startswith(NOISY))]
+    if extra:
+        buf.append(f"\n{B}SENSORS{N}")
+        for chip in sorted(extra):
+            vals = "  ".join(f"{l}={v:.0f}°" for l, v, _, _ in temps[chip][:6])
+            buf.append(f"  {D}{chip_label(chip):<28}{N} {vals}")
+    if not SHOW_ALL:
+        hidden = [c for c in temps if c.startswith(NOISY)]
+        if hidden:
+            buf.append(f"  {D}({len(hidden)} chips hidden — --all to show){N}")
+
+    # ---- LLM server on :8000 (Colibri or llama.cpp)
+    if sch:
+        a, q = sch.get("active", 0), sch.get("queued", 0)
+        state = f"{G}generating{N}" if a else f"{D}idle{N}"
+        buf.append(f"\n{B}COLIBRI{N}  {state}   active={a} queued={q} "
+                   f"completed={sch.get('completed',0)} "
+                   f"cancelled={sch.get('cancelled',0)} "
+                   f"timed_out={sch.get('timed_out',0)}")
+        cm = colibri_model()
+        if cm:
+            mname, mpath = cm
+            ml = f"      {D}model{N} {C}{mname}{N}"
+            if mpath:
+                ml += f"  {D}{mpath}{N}"
+            buf.append(ml)
+    else:
+        for _port in LLAMA_PORTS:
+            ls = llama_server(_port)
+            if ls:
+                slots = ls["slots"]
+                busy = [x for x in slots if x["busy"]]
+                alias, ftype = ls["alias"], ls["ftype"]
+                path, total = ls["path"], ls["total"]
+                if ls["sleeping"]:
+                    state = f"{Y}sleeping{N}"
+                elif busy:
+                    state = f"{G}generating{N}"
+                else:
+                    state = f"{D}idle{N}"
+                head = f"\n{B}LLAMA.CPP :{_port}{N}  {state}   {C}{alias}{N}"
+                if ftype:
+                    head += f"  {D}{ftype}{N}"
+                head += f"   slots {len(busy)}/{total} busy"
+                buf.append(head)
+                if path:
+                    buf.append(f"      {D}{path}{N}")
+                ar = llama_args(_port) or {}
+                bits = []
+                for _k in ("n-cpu-moe", "ngl", "t", "b", "ub", "par",
+                           "load", "spec", "spec-n", "ngld"):
+                    if ar.get(_k):
+                        bits.append(f"{_k}={C}{ar[_k]}{N}{D}")
+                _nc = ls.get("nctx") or (ar.get("c") or 0)
+                if _nc:
+                    bits.append(f"ctx={C}{_nc}{N}{D}")
+                _np = ls.get("npred")
+                if _np is not None:
+                    bits.append("max_tok=" + C +
+                                ("unlimited" if _np in (-1, 0) else str(_np)) + N + D)
+                for _f in ar.get("_flags", []):
+                    bits.append(_f)
+                if ar.get("draft"):
+                    bits.append("draft=" + C + ar["draft"].rsplit("/", 1)[-1] + N + D)
+                if bits:
+                    buf.append(f"      {D}" + "  ".join(bits) + f"{N}")
+                rates = llama_rate(slots, _port)
+                for sl in slots:
+                    sid, pr = sl["id"], sl["prompt"]
+                    ca, fr, cx = sl["cached"], sl["fresh"], sl["ctx"]
+                    mark = f"{G}busy{N}" if sl["busy"] else f"{D}idle{N}"
+                    pct = 100.0 * pr / cx if cx else 0
+                    buf.append(f"      {D}slot {sid}{N} {mark}  "
+                               f"prompt {pr} tok {D}({ca} cached, {fr} new){N}"
+                               f"  ctx {pct:.0f}% of {cx}")
+                    r = rates.get(sid)
+                    if r and sl["busy"]:
+                        dn, tg, rt, eta = r
+                        gp = 100.0 * dn / tg if tg else 0
+                        buf.append(f"           {G}gen{N} {dn}/{tg} tok"
+                                   f"  {gp:.0f}%   {rt:.1f} tok/s"
+                                   f"   {C}ETA {_eta_txt(eta)}{N}")
+            else:
+                buf.append(f"\n{B}:{_port}{N}  {D}no LLM server{N}")
+
+    # ---- Ollama
+    ops = ollama_ps()
+    if ops is None:
+        buf.append(f"\n{B}OLLAMA{N}   {D}no server on :11434{N}")
+    elif not ops:
+        buf.append(f"\n{B}OLLAMA{N}   {D}idle, no model resident{N}")
+    else:
+        buf.append(f"\n{B}OLLAMA{N}   {G}loaded{N}")
+        for oname, params, quant, vram, total, until in ops:
+            where = (f"{vram:.1f} GB VRAM" if vram
+                     else f"{total:.1f} GB RAM")
+            tail = f"  {D}until {until}{N}" if until else ""
+            buf.append(f"      {C}{oname}{N}  {D}{params} {quant}{N}  "
+                       f"{where}{tail}")
+
+    # ---- what the local AI is doing right now
+    act = ai_activity()
+    if act:
+        buf.append(f"\n{B}AI ACTIVITY{N}")
+        c = act.get("colibri")
+        if c is not None and (c["events"] or c["done"]):
+            started, done = c["started"], c["done"]
+            prompt, ctx, cap = c["prompt"], c["ctx"], c["cap"]
+            if sch and sch.get("active"):
+                el = _ago(started) if started else "?"
+                head = f"{G}generating{N} {el}"
+            elif done:
+                head = f"{D}idle {_ago(done)} since last request{N}"
+            else:
+                head = f"{D}idle{N}"
+            det = ""
+            if prompt:
+                det = (f"   {D}prompt{N} {prompt} tok  {D}ctx{N} {ctx}"
+                       f"  {D}max out{N} {cap}")
+            buf.append(f"  {C}colibri{N}  {head}{det}")
+            for ts, m in c["events"]:
+                buf.append(f"     {D}{ts.strftime(TFMT)}  {m[:86]}{N}")
+        o = act.get("ollama")
+        if o is not None:
+            last, when = o["last"], o["when"]
+            if last:
+                buf.append(f"  {C}ollama{N}   {D}last{N} {last}"
+                           f"  {D}({_ago(when)} ago){N}")
+            else:
+                buf.append(f"  {C}ollama{N}   {D}no requests in last 6 h{N}")
+
+    sep = chr(10)
+    below = (chr(27) + "[J") if not ONESHOT else ""
+    sys.stdout.write(sep.join(buf) + sep + below)
+    sys.stdout.flush()
+
+
+import signal
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+ALT = not ONESHOT and sys.stdout.isatty()
+if ALT:
+    sys.stdout.write(chr(27) + "[?1049h" + chr(27) + "[?25l")
+    sys.stdout.flush()
+
+try:
+    if ONESHOT:
+        frame()
+    else:
+        while True:
+            time.sleep(INTERVAL)
+            frame()
+except KeyboardInterrupt:
+    print()
+except BrokenPipeError:
+    pass
+except SystemExit:
+    pass
+finally:
+    if ALT:
+        sys.stdout.write(chr(27) + "[?25h" + chr(27) + "[?1049l")
+        sys.stdout.flush()

@@ -1,0 +1,9 @@
+model                       # picker (fzf); keys: q38-q2  q38-27b  cloud
+model status | list | stop | tunnel | logs
+ssh jarvis                   # ai počítač (RTX 5070 Ti 16G, 61G RAM)
+ssh -N llm-tunnel            # lokálne pripojenie pre llm (8000 + 11434)  — alebo: model tunnel
+opencode -m llamacpp/q38-q2  # po `model q38-q2`
+pi --provider llamacpp --model q38-q2
+
+# jarvis: q38-q2 beží cez `systemctl --user llama.service` (Restart=always, alias qwen38)
+# benchmark  ->  docs/evals/benchmark-<date>.md

@@ -1,0 +1,39 @@
+{
+  "date": "2026-09-06",
+  "endpoint": "http://localhost:8000",
+  "max_tokens": 256,
+  "runs_per_model": 3,
+  "prompt": "List the eight planets of the Solar System in order from the Sun. For each, give one sentence on what makes it distinctive. Then add a two-sentence closing note on why the order matters.",
+  "results": [
+    {
+      "key": "q38-q2",
+      "model": "Qwen3.8-Flash-Next",
+      "quant": "UD-Q2_K_XL",
+      "load_s": 7,
+      "gen_tps": 14.4,
+      "prompt_tps": 24.4,
+      "host_ram_mb": "3432",
+      "vram_mb": "13628",
+      "gen_runs": [
+        13.2,
+        17,
+        14.4
+      ]
+    },
+    {
+      "key": "q38-27b",
+      "model": "Qwen3.8-27B dense",
+      "quant": "UD-IQ4_XS",
+      "load_s": 7,
+      "gen_tps": 50.0,
+      "prompt_tps": 45.4,
+      "host_ram_mb": "3139",
+      "vram_mb": "13864",
+      "gen_runs": [
+        49.9,
+        50,
+        50
+      ]
+    }
+  ]
+}
