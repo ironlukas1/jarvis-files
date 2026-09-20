@@ -16,6 +16,12 @@
 #   ocr-vlm      Qwen3.8-27B + mmproj vision projector for image/layout OCR
 #   ocr-review   same weights as planner, minimal reasoning (reparse OCR garble)
 #   q38-27b-q5   legacy id -> planner weights (keeps old scripts/probe working)
+#   turbo        DavidAU TURBO tune, MTP self-speculation, the fast reasoner
+#
+# Retuned 2026-09-20 for the RTX 3090 24 GB (the -ncmoe values were sized for the
+# 16 GB card): q38-q2 42 -> 30, q38-iq3x 42 -> 32. Both were leaving ~11 GB of the
+# card unused. One step further OOMs in each case. Numbers and method in
+# docs/evals/benchmark-2026-09-20-all.md.
 
 healthCheckTimeout: 500
 globalTTL: 0
@@ -74,13 +80,13 @@ models:
     filters:
       setParamsByID:
         planner:
-          reasoning_effort: high
+          reasoning_effort: low
           temperature: 0.2
         "planner:fast":
           reasoning_effort: none
           temperature: 0.0
         critic:
-          reasoning_effort: medium
+          reasoning_effort: low
           temperature: 0.2
         "critic:fast":
           reasoning_effort: none
@@ -174,8 +180,9 @@ models:
       ${llama}
       -m /mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf
       ${common}
-      -ncmoe 42
+      -ncmoe 30
       -c 98304
+      --reasoning-effort low
       --log-file ${state}/q38-q2.log
       --log-timestamps
       --port 8085
@@ -195,8 +202,9 @@ models:
       ${llama}
       -m /mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf
       ${common}
-      -ncmoe 42
+      -ncmoe 32
       -c 32768
+      --reasoning-effort low
       --reasoning-budget 800
       --log-file ${state}/q38-iq3x.log
       --log-timestamps
@@ -214,7 +222,7 @@ models:
     filters:
       setParamsByID:
         planner-deep:
-          reasoning_effort: high
+          reasoning_effort: low
           temperature: 0.2
 
   "dsv4-q8":

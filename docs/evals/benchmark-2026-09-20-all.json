@@ -1,0 +1,411 @@
+{
+ "date": "2026-09-20",
+ "host": "jarvis RTX 3090 24GB / 62GB RAM",
+ "runtime": "llama-swap v256 :8000",
+ "baseline": [
+  {
+   "model": "planner",
+   "load_s": 0.0,
+   "vram_mib": 21606,
+   "short": [
+    {
+     "wall": 11.85,
+     "gen_tps": 34.23257474004906,
+     "prompt_tps": 255.97706445502482,
+     "predicted_n": 400,
+     "prompt_n": 50,
+     "think_chars": 1632
+    },
+    {
+     "wall": 11.97,
+     "gen_tps": 34.198011629895234,
+     "prompt_tps": 37.623687873885395,
+     "predicted_n": 400,
+     "prompt_n": 4,
+     "think_chars": 1735
+    }
+   ],
+   "gen_tps": 34.2,
+   "think_chars": 1632,
+   "long": {
+    "wall": 16.08,
+    "gen_tps": 31.721973288006932,
+    "prompt_tps": 1227.2574006562631,
+    "predicted_n": 92,
+    "prompt_n": 16022,
+    "think_chars": 286
+   },
+   "prefill_tps": 1227.0
+  },
+  {
+   "model": "qwen3-coder-30b",
+   "load_s": 0.0,
+   "vram_mib": 19578,
+   "short": [
+    {
+     "wall": 2.02,
+     "gen_tps": 162.01555660911825,
+     "prompt_tps": 536.3336233507741,
+     "predicted_n": 313,
+     "prompt_n": 45,
+     "think_chars": 0
+    },
+    {
+     "wall": 1.86,
+     "gen_tps": 162.0681197324462,
+     "prompt_tps": 146.84287812041117,
+     "predicted_n": 299,
+     "prompt_n": 1,
+     "think_chars": 0
+    }
+   ],
+   "gen_tps": 162.1,
+   "think_chars": 0,
+   "long": {
+    "wall": 5.03,
+    "gen_tps": 87.784455398744,
+    "prompt_tps": 3295.512279821608,
+    "predicted_n": 14,
+    "prompt_n": 16015,
+    "think_chars": 0
+   },
+   "prefill_tps": 3296.0
+  },
+  {
+   "model": "ocr-vlm",
+   "load_s": -0.0,
+   "vram_mib": 14722,
+   "short": [
+    {
+     "wall": 8.8,
+     "gen_tps": 43.04310280018254,
+     "prompt_tps": 430.7167292034225,
+     "predicted_n": 368,
+     "prompt_n": 52,
+     "think_chars": 0
+    },
+    {
+     "wall": 8.49,
+     "gen_tps": 43.043228822519836,
+     "prompt_tps": 43.57678229039568,
+     "predicted_n": 357,
+     "prompt_n": 4,
+     "think_chars": 0
+    }
+   ],
+   "gen_tps": 43.0,
+   "think_chars": 0,
+   "error_long": "HTTP Error 400: Bad Request"
+  },
+  {
+   "model": "turbo",
+   "load_s": 0.0,
+   "vram_mib": 23242,
+   "short": [
+    {
+     "wall": 7.97,
+     "gen_tps": 51.735083180678096,
+     "prompt_tps": 227.64316478633413,
+     "predicted_n": 400,
+     "prompt_n": 50,
+     "think_chars": 970
+    },
+    {
+     "wall": 8.14,
+     "gen_tps": 51.008119879053226,
+     "prompt_tps": 36.793112329371944,
+     "predicted_n": 400,
+     "prompt_n": 4,
+     "think_chars": 870
+    }
+   ],
+   "gen_tps": 51.7,
+   "think_chars": 970,
+   "long": {
+    "wall": 15.96,
+    "gen_tps": 50.72844339558296,
+    "prompt_tps": 1193.4894265343642,
+    "predicted_n": 120,
+    "prompt_n": 16022,
+    "think_chars": 315
+   },
+   "prefill_tps": 1193.0
+  },
+  {
+   "model": "turbo-plain",
+   "load_s": -0.0,
+   "vram_mib": 21962,
+   "short": [
+    {
+     "wall": 11.96,
+     "gen_tps": 34.05551800534014,
+     "prompt_tps": 252.03391368342523,
+     "predicted_n": 400,
+     "prompt_n": 50,
+     "think_chars": 881
+    },
+    {
+     "wall": 12.04,
+     "gen_tps": 34.061535963561155,
+     "prompt_tps": 36.818173450415124,
+     "predicted_n": 400,
+     "prompt_n": 4,
+     "think_chars": 1534
+    }
+   ],
+   "gen_tps": 34.1,
+   "think_chars": 881,
+   "long": {
+    "wall": 16.93,
+    "gen_tps": 31.576494987828454,
+    "prompt_tps": 1234.5744651750524,
+    "predicted_n": 120,
+    "prompt_n": 16022,
+    "think_chars": 375
+   },
+   "prefill_tps": 1235.0
+  },
+  {
+   "model": "q38-27b-q5",
+   "load_s": -0.0,
+   "vram_mib": 22922,
+   "short": [
+    {
+     "wall": 10.54,
+     "gen_tps": 34.04809176889316,
+     "prompt_tps": 254.0340608868837,
+     "predicted_n": 353,
+     "prompt_n": 50,
+     "think_chars": 388
+    },
+    {
+     "wall": 8.41,
+     "gen_tps": 34.03978214539427,
+     "prompt_tps": 37.569974076717884,
+     "predicted_n": 277,
+     "prompt_n": 4,
+     "think_chars": 312
+    }
+   ],
+   "gen_tps": 34.0,
+   "think_chars": 388,
+   "long": {
+    "wall": 16.21,
+    "gen_tps": 31.657073877521917,
+    "prompt_tps": 1215.835917547475,
+    "predicted_n": 92,
+    "prompt_n": 16022,
+    "think_chars": 286
+   },
+   "prefill_tps": 1216.0
+  },
+  {
+   "model": "q38-q2",
+   "load_s": -0.0,
+   "vram_mib": 12142,
+   "short": [
+    {
+     "wall": 44.78,
+     "gen_tps": 9.661961388332315,
+     "prompt_tps": 14.359592336917393,
+     "predicted_n": 400,
+     "prompt_n": 50,
+     "think_chars": 1014
+    },
+    {
+     "wall": 9.46,
+     "gen_tps": 13.04314277045998,
+     "prompt_tps": 20.2451689965482,
+     "predicted_n": 120,
+     "prompt_n": 4,
+     "think_chars": 550
+    }
+   ],
+   "gen_tps": 13.0,
+   "think_chars": 1014,
+   "long": {
+    "wall": 72.18,
+    "gen_tps": 9.655130111397483,
+    "prompt_tps": 268.2074247455281,
+    "predicted_n": 120,
+    "prompt_n": 16022,
+    "think_chars": 464
+   },
+   "prefill_tps": 268.0
+  },
+  {
+   "model": "q38-iq3x",
+   "load_s": -0.0,
+   "vram_mib": 11652,
+   "short": [
+    {
+     "wall": 43.8,
+     "gen_tps": 9.828663728626998,
+     "prompt_tps": 15.701648578890893,
+     "predicted_n": 400,
+     "prompt_n": 50,
+     "think_chars": 1894
+    },
+    {
+     "wall": 12.54,
+     "gen_tps": 9.749658270381127,
+     "prompt_tps": 21.866287651014048,
+     "predicted_n": 120,
+     "prompt_n": 4,
+     "think_chars": 548
+    }
+   ],
+   "gen_tps": 9.8,
+   "think_chars": 1894,
+   "long": {
+    "wall": 76.19,
+    "gen_tps": 8.790451589875055,
+    "prompt_tps": 256.2313498816693,
+    "predicted_n": 120,
+    "prompt_n": 16022,
+    "think_chars": 461
+   },
+   "prefill_tps": 256.0
+  }
+ ],
+ "dsv4_from_server_log": {
+  "gen_tps": 3.42,
+  "prefill_tps": 6.02,
+  "note": "harness stopped; numbers read from llama-swap dsv4-q8.log"
+ },
+ "thinking_levels_q38_27b_dense": {
+  "task_scores": [
+   "q38-27b-q5         level=none     7/11  tokens=1123   wall=40s",
+   "q38-27b-q5         level=low     11/11  tokens=3555   wall=108s",
+   "q38-27b-q5         level=medium  11/11  tokens=4295   wall=129s",
+   "q38-27b-q5         level=xhigh   11/11  tokens=3344   wall=102s"
+  ],
+  "design_prompt_probe": {
+   "none": {
+    "think": 0,
+    "answer": 4641,
+    "tok": 1029,
+    "wall": 31
+   },
+   "low": {
+    "think": 2402,
+    "answer": 3927,
+    "tok": 1445
+   },
+   "medium": {
+    "think": 4788,
+    "answer": 6069,
+    "tok": 2586,
+    "wall": 79
+   },
+   "high": {
+    "think": 10637,
+    "answer": 1954,
+    "tok": 2720,
+    "wall": 170
+   },
+   "xhigh": {
+    "think": 6954,
+    "answer": 3826,
+    "tok": 2333,
+    "wall": 137
+   },
+   "unset": {
+    "think": 11589,
+    "answer": 1866,
+    "tok": 3000,
+    "wall": 89,
+    "note": "hit cap, no answer"
+   }
+  }
+ },
+ "ncmoe_sweep": {
+  "q38-q2": {
+   "42": {
+    "vram": 12114,
+    "runs": [
+     13.37,
+     10.42,
+     10.19
+    ]
+   },
+   "30": {
+    "vram": 23064,
+    "runs": [
+     12.83,
+     16.71,
+     12.77
+    ]
+   },
+   "26": "OOM"
+  },
+  "q38-iq3x": {
+   "42": {
+    "vram": 11624,
+    "runs": [
+     9.21,
+     9.73,
+     12.65
+    ]
+   },
+   "32": {
+    "vram": 21250,
+    "runs": [
+     15.79,
+     11.67,
+     11.43
+    ]
+   },
+   "28": "OOM"
+  }
+ },
+ "ngram_spec": {
+  "dense_base": {
+   "prose": 34.2,
+   "code": 34.1,
+   "edit": 34.1
+  },
+  "dense_ngram_simple": {
+   "prose": 33.8,
+   "code": 34.8,
+   "edit": 37.1
+  },
+  "dense_ngram_map_k4v": {
+   "prose": 33.7,
+   "code": 33.8,
+   "edit": 33.7
+  },
+  "coder_base": {
+   "prose": 159.2,
+   "code": 159.4,
+   "edit": 159.3
+  },
+  "coder_ngram_map_k4v": {
+   "prose": 151.7,
+   "code": 150.0,
+   "edit": 152.6
+  }
+ },
+ "after_retune": {
+  "planner_low": {
+   "think": 3006,
+   "answer": 3172,
+   "tok": 1466,
+   "gen_tps": 34.1
+  },
+  "q38-q2_ncmoe30": {
+   "vram": 23090,
+   "runs": [
+    12.62,
+    11.58
+   ]
+  },
+  "q38-iq3x_ncmoe32": {
+   "vram": 21276,
+   "runs": [
+    10.84,
+    14.71
+   ]
+  }
+ }
+}
