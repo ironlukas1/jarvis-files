@@ -33,6 +33,9 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # 0bserverx-heretic; ~/models-fast: the Flash-Next Q4/Q5/Q6/Q8 ladder) are therefore
 # not listed: add them to ~/.config/llama-swap/config.yaml first.
 #
+# Adding a model? Read docs/model-rules.md first: wire it into llama-swap, measure
+# it with bin/bench-model, then add the row. The tok/s field takes a number, not prose.
+#
 # Speeds are measured (docs/evals/benchmark-2026-09-20-all.md), generation tok/s at
 # temperature 0.6. What the numbers do not say:
 #   turbo        MTP self-speculation; leaves only 1.3 GB VRAM free

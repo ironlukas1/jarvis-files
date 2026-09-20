@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# bench-model — measure one llama-swap model id before it earns a row in `model`.
+#
+#   bench-model <id> [runs]        # default 3 runs
+#
+# Prints the numbers a MODELS row needs: generation tok/s, prefill tok/s, VRAM.
+# Measure the id as llama-swap serves it, not a bare GGUF — the point is to measure
+# the thing people will actually call. See docs/model-rules.md.
+set -uo pipefail
+
+# the numbers come back as 55.65; a comma-decimal locale makes printf reject them
+export LC_NUMERIC=C
+
+ID="${1:-}"
+RUNS="${2:-3}"
+ENDPOINT="${BENCH_ENDPOINT:-http://localhost:8000}"
+REMOTE="${MODEL_REMOTE:-jarvis}"
+[[ -n "$ID" ]] || { echo "usage: bench-model <llama-swap-id> [runs]" >&2; exit 1; }
+command -v jq >/dev/null || { echo "bench-model: jq required" >&2; exit 1; }
+
+PROMPT='List the eight planets of the Solar System in order from the Sun. For each, give one sentence on what makes it distinctive.'
+
+ask() { # ask <prompt> <max_tokens> -> response json
+  jq -n --arg m "$ID" --arg p "$1" --argjson n "$2" \
+    '{model:$m, messages:[{role:"user",content:$p}], max_tokens:$n, temperature:0.6,
+      stream:false, timings_per_token:true}' |
+  curl -sf -m 3600 "$ENDPOINT/v1/chat/completions" -H 'content-type: application/json' -d @-
+}
+
+echo "loading $ID ..."
+ask "hi" 4 >/dev/null || { echo "bench-model: $ID did not answer on $ENDPOINT" >&2; exit 1; }
+
+gens=()
+for ((i = 1; i <= RUNS; i++)); do
+  r=$(ask "$PROMPT" 300) || continue
+  g=$(jq -r '.timings.predicted_per_second // 0' <<<"$r")
+  gens+=("$g")
+  printf '  run %d  %.1f tok/s\n' "$i" "$g"
+done
+[[ ${#gens[@]} -gt 0 ]] || { echo "bench-model: no successful runs" >&2; exit 1; }
+
+# a long prompt that is different every run, or llama.cpp serves it from the prompt
+# cache and reports a prefill rate for the handful of tokens that actually changed
+long=$(awk -v s="$$$(date +%s)" 'BEGIN{srand(s); for(i=0;i<900;i++) printf "item%d weighs %d grams from depot %d. ", i, int(rand()*9989)+10, i%7}')
+pf=$(ask "$long
+
+In one short sentence: how many distinct depots appear?" 80 | jq -r '.timings.prompt_per_second // 0')
+
+vram=$(ssh -o BatchMode=yes "$REMOTE" 'nvidia-smi --query-gpu=memory.used --format=csv,noheader' 2>/dev/null)
+
+med=$(printf '%s\n' "${gens[@]}" | sort -n |
+  awk '{a[NR]=$1} END{printf "%.1f", (NR%2)? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2}')
+
+echo
+echo "$ID"
+printf '  tok/s    %s   (median of %d)\n' "$med" "${#gens[@]}"
+printf '  prefill  %.0f tok/s\n' "$pf"
+printf '  VRAM     %s\n' "${vram:-unknown}"
+echo
+echo "That median goes in field 6 of the MODELS row. Numbers only, no prose."
