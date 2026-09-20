@@ -1,0 +1,11 @@
+[Unit]
+Description=llama-swap model router (planner/coder/ocr) on :8000
+After=network-online.target
+
+[Service]
+ExecStart=/home/ocino/.local/bin/llama-swap -config /home/ocino/.config/llama-swap/config.yaml -watch-config -listen 127.0.0.1:8000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

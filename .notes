@@ -1,9 +1,12 @@
-model                       # picker (fzf); keys: q38-q2  q38-27b  cloud
-model status | list | stop | tunnel | logs
-ssh jarvis                   # ai počítač (RTX 5070 Ti 16G, 61G RAM)
+model                       # picker (fzf); model list | status | stop | logs | sync
+ssh jarvis                   # ai počítač (RTX 3090 24G, 62G RAM)
 ssh -N llm-tunnel            # lokálne pripojenie pre llm (8000 + 11434)  — alebo: model tunnel
-opencode -m llamacpp/q38-q2  # po `model q38-q2`
-pi --provider llamacpp --model q38-q2
+opencode -m llamacpp/turbo   # po `model turbo`
+pi --provider llamacpp --model turbo
 
-# jarvis: q38-q2 beží cez `systemctl --user llama.service` (Restart=always, alias qwen38)
+# jarvis: :8000 je llama-swap (`systemctl --user status llama-swap`), nie llama.service.
+# Modely sú v ~/.config/llama-swap/config.yaml (kópia: models/llama-swap-config.yaml),
+# llama-swap ich načíta na požiadanie a ostatné odloží. `model stop` = /unload.
+# turbo = Qwen3.8-27B TURBO (MTP, 52 tok/s, thinking low), turbo:fast = thinking off,
+# turbo-plain = bez MTP (34 tok/s, ale nechá 2.6G VRAM pre desktop).
 # benchmark  ->  docs/evals/benchmark-<date>.md

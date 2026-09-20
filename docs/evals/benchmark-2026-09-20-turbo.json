@@ -1,0 +1,481 @@
+{
+ "date": "2026-09-20",
+ "host": "jarvis RTX 3090 24GB / 62GB RAM",
+ "runtime": "llama-swap :8000, llama.cpp build-3090",
+ "model": "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+ "quant": "Q5_K_M NEO (MTP and regular)",
+ "ctx": 65536,
+ "temperature": 0.6,
+ "speed": {
+  "turbo_mtp": {
+   "gen_tps": [
+    52.4,
+    55.1,
+    53.5
+   ],
+   "prefill_tps_16k": 1194.9,
+   "vram_used_mib": 23248,
+   "draft_acceptance": [
+    0.571,
+    0.625,
+    0.663,
+    0.583,
+    0.77
+   ]
+  },
+  "turbo_plain": {
+   "gen_tps": [
+    34.1,
+    34.1
+   ],
+   "prefill_tps_16k": 1242.7,
+   "vram_used_mib": 21966
+  }
+ },
+ "rounds": {
+  "round1_low": {
+   "model": "turbo",
+   "speed": [
+    {
+     "wall": 11.98,
+     "prompt_tokens": 80,
+     "completion_tokens": 400,
+     "gen_tps": 34.03395804269769,
+     "prompt_tps": 251.42052597174032,
+     "think_tokens": 167
+    },
+    {
+     "wall": 12.01,
+     "prompt_tokens": 80,
+     "completion_tokens": 400,
+     "gen_tps": 34.17594306544847,
+     "prompt_tps": 36.91739732348869,
+     "think_tokens": 193
+    },
+    {
+     "wall": 11.98,
+     "prompt_tokens": 80,
+     "completion_tokens": 400,
+     "gen_tps": 34.07502740306872,
+     "prompt_tps": 38.052836363290425,
+     "think_tokens": 144
+    }
+   ],
+   "tasks": {
+    "bat-ball": {
+     "wall": 2.59,
+     "completion_tokens": 77,
+     "gen_tps": 34.04084543127063,
+     "think_chars": 104,
+     "answer": "$0.05",
+     "think_head": "Let ball cost = x\nBat costs = x + 1.00\nTotal: x + (x + 1.00) = 1.10\n2x + 1.00 = 1.10\n2x = 0.10\nx = 0.05\n",
+     "pass": true
+    },
+    "count-r": {
+     "wall": 2.44,
+     "completion_tokens": 71,
+     "gen_tps": 34.13590087324511,
+     "think_chars": 157,
+     "answer": "6",
+     "think_head": "Let me count the 'r's in \"strawberry raspberry\".\n\n\"strawberry\" - s,t,r,a,w,b,e,r,r,y - that's 3 r's\n\"raspberry\" - r,a,s,p,b,e,r,r,y - that's 3 r's\n\nTotal: 6\n",
+     "pass": true
+    },
+    "code-merge": {
+     "wall": 10.05,
+     "completion_tokens": 329,
+     "gen_tps": 34.0515228609259,
+     "think_chars": 855,
+     "answer": "```python\ndef merge_intervals(intervals):\n    if not intervals:\n        return []\n    intervals.sort(key=lambda x: x[0])\n    merged = [intervals[0]]\n    for current in intervals[1:]:\n        last = merged[-1]\n        if current[0] <= last[1]:\n            last[1] = max(last[1], current[1])\n        else:\n            merged.append(current)\n    return merged\n```",
+     "think_head": "The user wants a Python function that merges overlapping closed intervals. Let me think through the approach:\n\n1. Sort intervals by start time\n2. Iterate through sorted intervals, merging any that ove",
+     "pass": true,
+     "err": ""
+    },
+    "code-bug": {
+     "wall": 2.95,
+     "completion_tokens": 87,
+     "gen_tps": 34.06335863924012,
+     "think_chars": 180,
+     "answer": "```python\ndef insert_pos(arr, target):\n    for i in range(len(arr)):\n        if arr[i] >= target:\n            return i\n    return len(arr)\n```",
+     "think_head": "The bug is that when `target` is larger than all elements, the loop finishes without returning, and it falls through to `return len(arr) - 1`. It should return `len(arr)` instead.\n",
+     "pass": true,
+     "err": ""
+    },
+    "slovak": {
+     "wall": 3.26,
+     "completion_tokens": 98,
+     "gen_tps": 33.87603675515064,
+     "think_chars": 168,
+     "answer": "Lokálny AI model zaisťuje väčšie súkromie, pretože dáta ostávajú na vašom zariadení a neprechádzajú cez externé servery. Navyše reaguje rýchlejšie bez závislosti od kvality internetového pripojenia.",
+     "think_head": "The user wants a short answer in Slovak (max 2 sentences) explaining why local AI models are better than cloud ones. I'll focus on privacy and latency as key benefits.\n",
+     "pass": true
+    }
+   }
+  },
+  "round1_off": {
+   "model": "turbo:fast",
+   "speed": [
+    {
+     "wall": 5.84,
+     "prompt_tokens": 52,
+     "completion_tokens": 192,
+     "gen_tps": 34.05987261964288,
+     "prompt_tps": 397.6903368896027,
+     "think_tokens": 0
+    },
+    {
+     "wall": 5.83,
+     "prompt_tokens": 52,
+     "completion_tokens": 193,
+     "gen_tps": 34.124087980429834,
+     "prompt_tps": 39.320541050644856,
+     "think_tokens": 0
+    },
+    {
+     "wall": 8.64,
+     "prompt_tokens": 52,
+     "completion_tokens": 287,
+     "gen_tps": 34.0977508598952,
+     "prompt_tps": 38.51597931691911,
+     "think_tokens": 0
+    }
+   ],
+   "tasks": {
+    "bat-ball": {
+     "wall": 0.43,
+     "completion_tokens": 6,
+     "gen_tps": 33.80434047731729,
+     "think_chars": 0,
+     "answer": "$0.05",
+     "think_head": "",
+     "pass": true
+    },
+    "count-r": {
+     "wall": 0.26,
+     "completion_tokens": 2,
+     "gen_tps": 32.76217934016971,
+     "think_chars": 0,
+     "answer": "3",
+     "think_head": "",
+     "pass": false
+    },
+    "code-merge": {
+     "wall": 3.23,
+     "completion_tokens": 103,
+     "gen_tps": 34.136843225543466,
+     "think_chars": 0,
+     "answer": "```python\ndef merge_intervals(intervals):\n    if not intervals:\n        return []\n    intervals.sort(key=lambda x: x[0])\n    merged = [intervals[0]]\n    for start, end in intervals[1:]:\n        if start <= merged[-1][1]:\n            merged[-1][1] = max(merged[-1][1], end)\n        else:\n            merged.append([start, end])\n    return merged\n```",
+     "think_head": "",
+     "pass": true,
+     "err": ""
+    },
+    "code-bug": {
+     "wall": 1.44,
+     "completion_tokens": 41,
+     "gen_tps": 34.06348411534577,
+     "think_chars": 0,
+     "answer": "```python\ndef insert_pos(arr, target):\n    for i in range(len(arr)):\n        if arr[i] >= target:\n            return i\n    return len(arr)\n```",
+     "think_head": "",
+     "pass": true,
+     "err": ""
+    },
+    "slovak": {
+     "wall": 1.65,
+     "completion_tokens": 49,
+     "gen_tps": 33.86910016151327,
+     "think_chars": 0,
+     "answer": "Lokálne AI modely poskytujú väčšie súkromie, pretože vaše dáta zostávajú na vašom zariadení. Sú tiež rýchlejšie pri offline použití a nemusia platiť za cloudové služby.",
+     "think_head": "",
+     "pass": true
+    }
+   }
+  },
+  "round2_low": {
+   "model": "turbo",
+   "tasks": {
+    "count-r2": {
+     "wall": 3.63,
+     "completion_tokens": 118,
+     "gen_tps": 34.19775715325009,
+     "think_chars": 225,
+     "answer": "15",
+     "pass": true
+    },
+    "arith": {
+     "wall": 4.69,
+     "completion_tokens": 147,
+     "gen_tps": 34.14434733313938,
+     "think_chars": 268,
+     "answer": "44.15",
+     "pass": true
+    },
+    "dates": {
+     "wall": 5.03,
+     "completion_tokens": 159,
+     "gen_tps": 34.13459616936377,
+     "think_chars": 391,
+     "answer": "Thursday 3 April 2026",
+     "pass": false
+    },
+    "logic": {
+     "wall": 3.79,
+     "completion_tokens": 116,
+     "gen_tps": 34.07228717190239,
+     "think_chars": 291,
+     "answer": "4",
+     "pass": true
+    },
+    "units": {
+     "wall": 5.3,
+     "completion_tokens": 168,
+     "gen_tps": 34.07199514586282,
+     "think_chars": 464,
+     "answer": "6.75",
+     "pass": true
+    },
+    "json": {
+     "wall": 3.19,
+     "completion_tokens": 96,
+     "gen_tps": 34.10522431006029,
+     "think_chars": 253,
+     "answer": "{\"name\":\"Martin\",\"age\":34,\"city\":\"Kosice\"}",
+     "pass": true
+    },
+    "code-roman": {
+     "wall": 10.52,
+     "completion_tokens": 346,
+     "gen_tps": 34.10357661506878,
+     "think_chars": 546,
+     "answer": "```python\ndef to_roman(n):\n    values = [\n        (1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),\n        (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),\n        (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')\n    ]\n    result = ''\n    for val, sym in values:\n        while n >= val:\n            result += sym\n            n -= val\n    return result\n```",
+     "pass": true,
+     "err": ""
+    },
+    "code-lru": {
+     "wall": 7.81,
+     "completion_tokens": 253,
+     "gen_tps": 34.064927210550174,
+     "think_chars": 476,
+     "answer": "```python\nfrom collections import OrderedDict\n\nclass LRU:\n    def __init__(self, cap):\n        self.cap = cap\n        self.cache = OrderedDict()\n\n    def get(self, k):\n        if k not in self.cache:\n            return None\n        self.cache.move_to_end(k)\n        return self.cache[k]\n\n    def put(self, k, v):\n        if k in self.cache:\n            self.cache.move_to_end(k)\n        self.cache[k]",
+     "pass": true,
+     "err": ""
+    },
+    "code-bug2": {
+     "wall": 4.1,
+     "completion_tokens": 127,
+     "gen_tps": 34.133298658236285,
+     "think_chars": 372,
+     "answer": "```python\ndef second_largest(xs):\n    unique = sorted(set(xs))\n    if len(unique) < 2:\n        return None\n    return unique[-2]\n```",
+     "pass": true,
+     "err": ""
+    },
+    "slovak2": {
+     "wall": 4.08,
+     "completion_tokens": 126,
+     "gen_tps": 33.94199936840728,
+     "think_chars": 271,
+     "answer": "RAID 1 je zrkadlenie dát na dva disky, ktoré zabezpečuje redundanciu pri výpadku jedného disku. Nie je to záloha, lebo ak sa dáta poškodia alebo vymažu, zmeny sa prejavia na oboch diskoch súčasne.",
+     "pass": true
+    }
+   },
+   "longprompt": {
+    "prompt_tokens": 16052,
+    "prompt_n": 16022,
+    "prompt_tps": 1234.3450540644212,
+    "gen_tps": 31.64775897066768,
+    "wall": 18.62,
+    "answer": "7 distinct depots appear in the log."
+   }
+  },
+  "round2_off": {
+   "model": "turbo:fast",
+   "tasks": {
+    "count-r2": {
+     "wall": 0.29,
+     "completion_tokens": 3,
+     "gen_tps": 33.4090605372177,
+     "think_chars": 0,
+     "answer": "10",
+     "pass": false
+    },
+    "arith": {
+     "wall": 0.39,
+     "completion_tokens": 6,
+     "gen_tps": 33.699762079679715,
+     "think_chars": 0,
+     "answer": "42.00",
+     "pass": false
+    },
+    "dates": {
+     "wall": 0.55,
+     "completion_tokens": 11,
+     "gen_tps": 33.86111524969186,
+     "think_chars": 0,
+     "answer": "Monday 21 April 2026",
+     "pass": false
+    },
+    "logic": {
+     "wall": 0.27,
+     "completion_tokens": 2,
+     "gen_tps": 32.84611594678929,
+     "think_chars": 0,
+     "answer": "3",
+     "pass": false
+    },
+    "units": {
+     "wall": 0.36,
+     "completion_tokens": 5,
+     "gen_tps": 33.58296671927998,
+     "think_chars": 0,
+     "answer": "6.75",
+     "pass": true
+    },
+    "json": {
+     "wall": 0.71,
+     "completion_tokens": 17,
+     "gen_tps": 33.99763291480831,
+     "think_chars": 0,
+     "answer": "{\"name\":\"Martin\",\"age\":34,\"city\":\"Kosice\"}",
+     "pass": true
+    },
+    "code-roman": {
+     "wall": 4.82,
+     "completion_tokens": 157,
+     "gen_tps": 34.08316291751875,
+     "think_chars": 0,
+     "answer": "```python\ndef to_roman(n):\n    vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]\n    syms = [\"M\", \"CM\", \"D\", \"CD\", \"C\", \"XC\", \"L\", \"XL\", \"X\", \"IX\", \"V\", \"IV\", \"I\"]\n    res = []\n    for v, s in zip(vals, syms):\n        while n >= v:\n            res.append(s)\n            n -= v\n    return \"\".join(res)\n```",
+     "pass": true,
+     "err": ""
+    },
+    "code-lru": {
+     "wall": 4.03,
+     "completion_tokens": 130,
+     "gen_tps": 34.151667289691915,
+     "think_chars": 0,
+     "answer": "```python\nfrom collections import OrderedDict\n\nclass LRU:\n    def __init__(self, cap):\n        self.cap = cap\n        self.cache = OrderedDict()\n\n    def get(self, k):\n        if k not in self.cache:\n            return None\n        self.cache.move_to_end(k)\n        return self.cache[k]\n\n    def put(self, k, v):\n        if k in self.cache:\n            self.cache.move_to_end(k)\n        self.cache[k]",
+     "pass": true,
+     "err": ""
+    },
+    "code-bug2": {
+     "wall": 1.43,
+     "completion_tokens": 41,
+     "gen_tps": 34.03843960985141,
+     "think_chars": 0,
+     "answer": "```python\ndef second_largest(xs):\n    unique = sorted(set(xs))\n    if len(unique) < 2:\n        return None\n    return unique[-2]\n```",
+     "pass": true,
+     "err": ""
+    },
+    "slovak2": {
+     "wall": 2.08,
+     "completion_tokens": 64,
+     "gen_tps": 34.019097133162084,
+     "think_chars": 0,
+     "answer": "RAID 1 je zrkadlenie dát na dva disky, ktoré poskytuje redundanciu pri výpadku jedného disku. Nie je to však záloha, pretože ak sa dáta vymažu alebo poškodia, zmeny sa okamžite prejavia aj na druhom disku.",
+     "pass": true
+    }
+   },
+   "longprompt": {
+    "prompt_tokens": 16024,
+    "prompt_n": 16024,
+    "prompt_tps": 1241.0236059356616,
+    "gen_tps": 30.78817733990148,
+    "wall": 13.07,
+    "answer": "7"
+   }
+  },
+  "round2_mtp_low": {
+   "model": "turbo-mtp",
+   "tasks": {
+    "count-r2": {
+     "wall": 2.12,
+     "completion_tokens": 118,
+     "gen_tps": 61.53140626084688,
+     "think_chars": 220,
+     "answer": "15",
+     "pass": true
+    },
+    "arith": {
+     "wall": 3.11,
+     "completion_tokens": 172,
+     "gen_tps": 63.80608919046491,
+     "think_chars": 348,
+     "answer": "44.15",
+     "pass": true
+    },
+    "dates": {
+     "wall": 4.8,
+     "completion_tokens": 278,
+     "gen_tps": 63.11323220178372,
+     "think_chars": 635,
+     "answer": "Thursday 2 April 2026",
+     "pass": true
+    },
+    "logic": {
+     "wall": 2.6,
+     "completion_tokens": 117,
+     "gen_tps": 53.17464064715371,
+     "think_chars": 292,
+     "answer": "4",
+     "pass": true
+    },
+    "units": {
+     "wall": 1.28,
+     "completion_tokens": 54,
+     "gen_tps": 60.43047018326395,
+     "think_chars": 59,
+     "answer": "6.75",
+     "pass": true
+    },
+    "json": {
+     "wall": 1.39,
+     "completion_tokens": 57,
+     "gen_tps": 56.76358372831328,
+     "think_chars": 126,
+     "answer": "{\"name\":\"Martin\",\"age\":34,\"city\":\"Kosice\"}",
+     "pass": true
+    },
+    "code-roman": {
+     "wall": 6.21,
+     "completion_tokens": 375,
+     "gen_tps": 64.42061494127647,
+     "think_chars": 532,
+     "answer": "```python\ndef to_roman(n):\n    if not (1 <= n <= 3999):\n        raise ValueError(\"Input must be between 1 and 3999\")\n    values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]\n    symbols = [\"M\", \"CM\", \"D\", \"CD\", \"C\", \"XC\", \"L\", \"XL\", \"X\", \"IX\", \"V\", \"IV\", \"I\"]\n    result = []\n    for i in range(len(values)):\n        while n >= values[i]:\n            result.append(symbols[i])\n            ",
+     "pass": true,
+     "err": ""
+    },
+    "code-lru": {
+     "wall": 3.29,
+     "completion_tokens": 175,
+     "gen_tps": 60.97221243980308,
+     "think_chars": 206,
+     "answer": "```python\nfrom collections import OrderedDict\n\nclass LRU:\n    def __init__(self, cap):\n        self.cap = cap\n        self.cache = OrderedDict()\n\n    def get(self, k):\n        if k not in self.cache:\n            return None\n        self.cache.move_to_end(k)\n        return self.cache[k]\n\n    def put(self, k, v):\n        if k in self.cache:\n            self.cache.move_to_end(k)\n        self.cache[k]",
+     "pass": true,
+     "err": ""
+    },
+    "code-bug2": {
+     "wall": 2.61,
+     "completion_tokens": 114,
+     "gen_tps": 51.781133521089586,
+     "think_chars": 312,
+     "answer": "```python\ndef second_largest(xs):\n    distinct = sorted(set(xs))\n    if len(distinct) < 2:\n        return None\n    return distinct[-2]\n```",
+     "pass": true,
+     "err": ""
+    },
+    "slovak2": {
+     "wall": 4.81,
+     "completion_tokens": 231,
+     "gen_tps": 52.51889766943966,
+     "think_chars": 584,
+     "answer": "RAID 1 je zrkadlenie diskov, kde sa dáta zapisujú identicky na dva alebo viac diskov pre redundanciu. Nie je to záloha, pretože ak sa dáta na jednom disku vymažú alebo poškodia, rovnaká zmena sa okamžite prejaví aj na ostatných diskoch.",
+     "pass": true
+    }
+   },
+   "longprompt": {
+    "prompt_tokens": 16052,
+    "prompt_n": 4,
+    "prompt_tps": 27.874175969672894,
+    "gen_tps": 51.43094354964127,
+    "wall": 1.25,
+    "answer": "7"
+   }
+  }
+ }
+}
