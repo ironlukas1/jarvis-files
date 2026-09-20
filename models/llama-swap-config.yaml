@@ -252,10 +252,10 @@ models:
 
 
   # DavidAU TURBO fine-tune of Qwen3.8-27B (NEO di-imatrix Q5_K_M, uncensored).
-  # Two files on disk, same weights, different speed profile:
-  #   turbo        MTP quant + self-speculation  -> ~52 tok/s, acceptance 58-77%
-  #   turbo-plain  regular quant                 -> ~34 tok/s, use above temp 1
+  # MTP quant + self-speculation -> ~52 tok/s, draft acceptance 58-77%.
   # Measured 2026-09-20, see docs/evals/benchmark-2026-09-20-turbo.md.
+  # The non-MTP file of the same tune was dropped on request; it is still on disk at
+  # ~/models-27b/turbo/Q5_K_M.gguf (19.3 GiB) if it is ever wanted back.
   #
   # The tune's template defaults to reasoning_effort xhigh. Benchmarked here at
   # low (14/15 checkable tasks) vs off (10/15): off blows multi-step arithmetic,
@@ -303,22 +303,81 @@ models:
           reasoning_effort: none
           temperature: 0.6
 
-  "turbo-plain":
-    name: "Qwen3.8-27B TURBO Fable-CF (no MTP)"
-    description: "Same tune without the MTP head. Slower (~34 tok/s) but unaffected by temp above 1 — creative work."
+  # --- 27B candidates -------------------------------------------------------
+  # These sat on disk unwired since 2026-09-15, so nothing could serve them. All
+  # Qwen3.8-27B derivatives: they fit the 24 GB card whole at 32k ctx, and the two
+  # with "mtp" in the filename get self-speculation like turbo does.
+  "huihui":
+    name: "Huihui Qwen3.8 27B abliterated"
+    description: "Abliterated 27B — refusals removed. Uncensored general assistant."
     cmd: >-
       ${llama}
-      -m ${models}/turbo/Q5_K_M.gguf
+      -m /mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
       ${common}
-      -c 65536
-      --temp 0.8
-      --repeat-penalty 1.0
-      --reasoning-format deepseek
-      --reasoning-preserve
-      --log-file ${state}/turbo-plain.log
+      -c 32768
+      --reasoning-effort low
+      --log-file ${state}/huihui.log
       --log-timestamps
-      --port 8089
-    proxy: http://127.0.0.1:8089
+      --port 8090
+    proxy: http://127.0.0.1:8090
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    aliases:
+      - huihui:fast
+    capabilities:
+      in: [text]
+      out: [text]
+      tools: true
+      context: 32768
+    filters:
+      setParamsByID:
+        "huihui:fast":
+          reasoning_effort: none
+
+  "heretic":
+    name: "Qwen3.8 27B Heretic multilingual"
+    description: "Heretic 27B, multilingual MTP quant. Uncensored, tuned for non-English."
+    cmd: >-
+      ${llama}
+      -m /mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf
+      ${common}
+      -c 32768
+      --spec-type draft-mtp
+      --reasoning-effort low
+      --chat-template-file /home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja
+      --log-file ${state}/heretic.log
+      --log-timestamps
+      --port 8091
+    proxy: http://127.0.0.1:8091
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    aliases:
+      - heretic:fast
+    capabilities:
+      in: [text]
+      out: [text]
+      tools: true
+      context: 32768
+    filters:
+      setParamsByID:
+        "heretic:fast":
+          reasoning_effort: none
+
+  "swift":
+    name: "Swift Qwen3.8 27B"
+    description: "Swift fine-tune of Qwen3.8-27B, Q4_K_M."
+    cmd: >-
+      ${llama}
+      -m /mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf
+      ${common}
+      -c 32768
+      --reasoning-effort low
+      --log-file ${state}/swift.log
+      --log-timestamps
+      --port 8092
+    proxy: http://127.0.0.1:8092
     env:
       - "GGML_CUDA_DISABLE_GRAPHS=1"
     ttl: 0
@@ -326,11 +385,78 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 65536
-    filters:
-      setParamsByID:
-        turbo-plain:
-          reasoning_effort: low
+      context: 32768
+
+  "gsq-rco":
+    name: "Qwen3.8 27B GSQ-RCO"
+    description: "GSQ-RCO 27B, IQ3_S MTP quant — the smallest 27B here."
+    cmd: >-
+      ${llama}
+      -m /mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
+      ${common}
+      -c 32768
+      --spec-type draft-mtp
+      --reasoning-effort low
+      --log-file ${state}/gsq-rco.log
+      --log-timestamps
+      --port 8093
+    proxy: http://127.0.0.1:8093
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    capabilities:
+      in: [text]
+      out: [text]
+      tools: true
+      context: 32768
+
+  # --- the rest of the Flash-Next ladder ------------------------------------
+  # 104 GB and 148 GB against 62 GB of RAM: these stream from the Kingston the whole
+  # time they run. -ncmoe guessed from the Q2 retune and the size ratio; if either
+  # OOMs, raise it.
+  "q38-q4":
+    name: "Qwen3.8 Flash-Next Q4"
+    description: "Flash-Next UD-Q4_K_XL, 104 GB. Mostly disk-resident."
+    cmd: >-
+      ${llama}
+      -m /home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+      ${common}
+      -ncmoe 38
+      -c 32768
+      --reasoning-effort low
+      --log-file ${state}/q38-q4.log
+      --log-timestamps
+      --port 8094
+    proxy: http://127.0.0.1:8094
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    capabilities:
+      in: [text]
+      out: [text]
+      context: 32768
+
+  "q38-q5":
+    name: "Qwen3.8 Flash-Next Q5"
+    description: "Flash-Next UD-Q5_K_XL, 148 GB. Mostly disk-resident."
+    cmd: >-
+      ${llama}
+      -m /home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf
+      ${common}
+      -ncmoe 42
+      -c 32768
+      --reasoning-effort low
+      --log-file ${state}/q38-q5.log
+      --log-timestamps
+      --port 8095
+    proxy: http://127.0.0.1:8095
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    capabilities:
+      in: [text]
+      out: [text]
+      context: 32768
 
 routing:
   router:
@@ -349,7 +475,12 @@ routing:
             - dsv4-q8
             - q38-iq3x
             - turbo
-            - turbo-plain
+            - huihui
+            - heretic
+            - swift
+            - gsq-rco
+            - q38-q4
+            - q38-q5
 
 hooks:
   on_startup:

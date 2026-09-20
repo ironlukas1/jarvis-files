@@ -6,14 +6,18 @@ opencode -m llamacpp/turbo   # po `model turbo`
 # jarvis: :8000 je llama-swap (`systemctl --user status llama-swap`), nie llama.service.
 # Modely: ~/.config/llama-swap/config.yaml (kópia v repo: models/llama-swap-config.yaml).
 # Načíta sa na požiadanie, ostatné sa odložia. `model stop` = /unload.
+# Nový model: docs/model-rules.md (najprv do llama-swap, potom bin/bench-model, potom riadok).
 #
-# rýchlosť (2026-09-20, docs/evals/benchmark-2026-09-20-all.md):
-#   qwen3-coder-30b  162 tok/s   najrýchlejší, bez thinkingu
-#   turbo             52 tok/s   TURBO tune + MTP, thinking low, uncensored
-#   ocr-vlm           43 tok/s   vision, 8k ctx
-#   planner            34 tok/s  27B dense, thinking low (bolo high = 4x pomalšie)
-#   q38-q2 / q38-iq3x  12-13     veľké MoE, experti v RAM/disku
-#   dsv4-q8            3.4       len eval, prefill 6 tok/s = 16k promptu ~45 min
+# rýchlosť (2026-09-20, docs/evals/):
+#   qwen3-coder-30b 162   kód, bez thinkingu
+#   gsq-rco          68   najrýchlejší 27B (MTP)
+#   heretic          65   uncensored, multilingual (MTP)
+#   turbo            52   uncensored coder (MTP)
+#   ocr-vlm          43   obrázky / OCR
+#   huihui / swift   39   uncensored / general
+#   planner          34   stock 27B, reasoning + špecifikácie
+#   q38-q4/q5/q2/iq3x 12-17  veľké MoE, prefill 13-19 tok/s = dlhé prompty bolia
+#   dsv4-q8         3.4   len eval
 #
-# turbo:fast / planner:fast / critic:fast = thinking off (len extrakcia, formátovanie).
+# ":fast" alias na ktoromkoľvek = thinking off (extrakcia, formátovanie).
 # ssh config: jarvis ide priamo na 109.230.37.235 (router forwarduje :22 na .59), bez ProxyJump.

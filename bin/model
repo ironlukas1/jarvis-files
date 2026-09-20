@@ -36,14 +36,19 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # Adding a model? Read docs/model-rules.md first: wire it into llama-swap, measure
 # it with bin/bench-model, then add the row. The tok/s field takes a number, not prose.
 #
-# Speeds are measured (docs/evals/benchmark-2026-09-20-all.md), generation tok/s at
-# temperature 0.6. What the numbers do not say:
-#   turbo        MTP self-speculation; leaves only 1.3 GB VRAM free
-#   turbo-plain  no MTP, leaves 2.6 GB free — use it above temperature 1
-#   planner      the spec/review authority; q38-27b-q5 is the same weights at 100k ctx
-#   ocr-vlm      vision, 8k ctx, needs the mmproj file
-#   q38-q2/iq3x  experts spill to RAM and disk; paging-bound, so speed varies ±20%
-#   dsv4-q8      prefill is 6 tok/s — a 16k prompt takes ~45 min. Eval only.
+# Ordered fastest first. Speeds are measured (docs/evals/), generation tok/s at
+# temperature 0.6. What the columns cannot say:
+#   gsq-rco / heretic / turbo  MTP self-speculation — that is why they beat the
+#                              plain 27B quants despite being the same size class
+#   ocr-vlm                    needs the mmproj file; 8k ctx only
+#   q38-*                      Flash-Next experts spill to RAM and disk, so speed
+#                              swings ±20% with page cache. Prefill is the real
+#                              problem: 13-19 tok/s, so long prompts are painful
+#   dsv4-q8                    prefill 6 tok/s — a 16k prompt takes ~45 min
+#
+# llama-swap also serves "q38-27b-q5" (planner's weights at 100k ctx, kept so older
+# scripts keep resolving) and every ":fast" alias (same model, thinking off). Neither
+# needs a row here: they are not different models.
 # Thinking levels were picked by eval, not taste: lowest level that still answers
 # multi-step questions correctly, because the priority here is speed.
 # The 52 tok/s figure needs --spec-type draft-mtp, which only the llama-swap entry
@@ -54,7 +59,12 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # this script does not start anything: it warms the id and points the clients at it.
 # The llama.service / start_direct paths below are the fallback for a box without it.
 #
-# rec: key | name | quant | size | n-cpu-moe | tok/s | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default; on/off/auto -> --reasoning, else -> --reasoning-effort) | chat-template file (blank = GGUF built-in)
+# rec: key | name | quant | size | n-cpu-moe | tok/s | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default; on/off/auto -> --reasoning, else -> --reasoning-effort) | chat-template file (blank = GGUF built-in) | for
+#
+# "for" says why you would pick this one: "uncensored" when the tune is built that
+# way, otherwise the job it is good at. Uncensored comes from the tune's own card
+# (abliterated / heretic / uncensored in its name), NOT from a behaviour test —
+# every model here, stock Qwen included, answered both refusal probes we tried.
 # All dense qwen35 archs here have 65 blocks. The card is an RTX 3090 24 GB, so ~20 GB
 # of weights is the safe full-GPU ceiling (proven by turbo at Q5_K_M); the older -ngl
 # values below were sized for the 16 GB card this box used to have.
@@ -64,15 +74,19 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # complaint on Jarvis, not GPU speed. Pinned to "off" here so they behave like the
 # other conversational models. See memory: jarvis-smart-home-build.
 MODELS=(
-  "turbo|Qwen3.8-27B TURBO Fable-CF|Q5_K_M NEO-MTP|19.7 GiB|0|52|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low"
-  "turbo-plain|Qwen3.8-27B TURBO (no MTP)|Q5_K_M NEO|19.3 GiB|0|34|/home/ocino/models-27b/turbo/Q5_K_M.gguf|65536|99|low"
-  "planner|Qwen3.8-27B dense|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|65536|99|low"
-  "q38-27b-q5|Qwen3.8-27B dense (legacy id)|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|100000|99|"
-  "qwen3-coder-30b|Qwen3-Coder-30B-A3B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|32768|99|off"
-  "ocr-vlm|Qwen3.8-27B VLM + mmproj|UD-IQ4_XS|14.2 GiB|0|43|/home/ocino/models-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|8192|99|off"
-  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~74 GB|30|13|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
-  "q38-iq3x|Qwen3.8-Flash-Next|UD-IQ3_XXS|~77 GB|32|12|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|32768||"
-  "dsv4-q8|DeepSeek-V4-Flash-0731|UD-Q8_K_XL|~151 GB|43|3.4|/mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf|32768||"
+  "qwen3-coder-30b|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|32768|99|off||coding"
+  "gsq-rco|Qwen3.8 27B GSQ-RCO|IQ3_S MTP|11.3 GiB|0|68|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|32768|99|low||fastest 27B"
+  "heretic|Qwen3.8 27B Heretic|Q4_K_M MTP|15.8 GiB|0|65|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|32768|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|uncensored, multilingual"
+  "turbo|DavidAU Qwen3.8 27B TURBO|Q5_K_M NEO-MTP|19.7 GiB|0|52|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low||uncensored, coder"
+  "ocr-vlm|Qwen3.8 27B Vision|UD-IQ4_XS|14.2 GiB|0|43|/home/ocino/models-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|8192|99|off||images, OCR"
+  "huihui|Huihui Qwen3.8 27B|UD-Q4_K_XL|16.2 GiB|0|39|/mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf|32768|99|low||uncensored"
+  "swift|Swift Qwen3.8 27B|Q4_K_M|16.8 GiB|0|39|/mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf|32768|99|low||general chat"
+  "planner|Qwen3.8 27B (stock)|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|65536|99|low||reasoning, specs"
+  "q38-q4|Qwen3.8 Flash-Next|UD-Q4_K_XL|~104 GB|38|17|/home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf|32768||low||knowledge breadth"
+  "q38-q5|Qwen3.8 Flash-Next|UD-Q5_K_XL|~148 GB|42|15|/home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf|32768||low||knowledge breadth"
+  "q38-q2|Qwen3.8 Flash-Next|UD-Q2_K_XL|~74 GB|30|13|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||low||breadth, 98k ctx"
+  "q38-iq3x|Qwen3.8 Flash-Next|UD-IQ3_XXS|~77 GB|32|12|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|32768||low||knowledge breadth"
+  "dsv4-q8|DeepSeek V4 Flash 284B|UD-Q8_K_XL|~151 GB|43|3.4|/mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf|32768||||eval only"
 )
 
 C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_C=$'\e[36m'
@@ -264,16 +278,18 @@ EOS
 
 cmd_list() {
   probe
-  printf '\n%s%-34s %-16s %-9s %-6s %s%s\n' "$C_B" "model" "quant" "size" "moe" "tok/s" "$C_OFF"
+  printf '\n%s%-27s %-15s %-9s %7s  %s%s\n' "$C_B" "model" "quant" "size" "tok/s" "for" "$C_OFF"
   printf '%s%s%s\n' "$C_DIM" "$(printf '%.0s-' {1..92})" "$C_OFF"
-  local rec key name quant size moe fit mark
+  local rec mark
+  local -a f
   for rec in "${MODELS[@]}"; do
-    IFS='|' read -r key name quant size moe fit _ <<<"$rec"
-    if [[ "$key" == "$ACTIVE" ]]; then mark="${C_G}*${C_OFF}"; else mark=" "; fi
-    printf '%s %s%-33s%s %-16s %-9s %s%-6s%s %s%s\n' \
-      "$mark" "$C_C" "$name" "$C_OFF" "$quant" "$size" "$C_DIM" "$moe" "$C_OFF" "$fit" "$C_OFF"
+    IFS='|' read -r -a f <<<"$rec"
+    if [[ "${f[0]}" == "$ACTIVE" ]]; then mark="${C_G}*${C_OFF}"; else mark=" "; fi
+    printf '%s %s%-26s%s %-15s %-9s %s%7s%s  %s%s%s\n' \
+      "$mark" "$C_C" "${f[1]}" "$C_OFF" "${f[2]}" "${f[3]}" "$C_B" "${f[5]}" "$C_OFF" \
+      "$C_DIM" "${f[11]:-}" "$C_OFF"
   done
-  printf '\n%s* = serving :8000 now   ·   moe = --n-cpu-moe value   ·   tok/s = measured generation%s\n\n' "$C_DIM" "$C_OFF"
+  printf '\n%s* = serving :8000 now   ·   tok/s = measured generation, fastest first%s\n\n' "$C_DIM" "$C_OFF"
 }
 
 cmd_status() {
@@ -358,12 +374,14 @@ pick() {
   local -a lines=() ks=()
   probe
   local idx=0
+  local -a f
   for rec in "${MODELS[@]}"; do
-    IFS='|' read -r key name quant size _ fit _ <<<"$rec"
-    local mark=" "; [[ "$key" == "$ACTIVE" ]] && mark="*"
+    IFS='|' read -r -a f <<<"$rec"
+    local mark=" "; [[ "${f[0]}" == "$ACTIVE" ]] && mark="*"
     # field 1 is the key and stays hidden — the list itself shows model names only
-    lines+=("$(printf '%d\t%s %-33s %-16s %-9s %6s tok/s' "$idx" "$mark" "$name" "$quant" "$size" "$fit")")
-    ks+=("$key")
+    lines+=("$(printf '%d\t%s %-26s %-15s %-9s %5s tok/s  %s' \
+      "$idx" "$mark" "${f[1]}" "${f[2]}" "${f[3]}" "${f[5]}" "${f[11]:-}")")
+    ks+=("${f[0]}")
     idx=$((idx + 1))
   done
   if command -v fzf >/dev/null && [[ -t 0 && -t 1 ]]; then
@@ -373,7 +391,7 @@ pick() {
     PICK="${ks[${line%%$'\t'*}]}"
   else
     echo; printf '%sModels%s\n\n' "$C_B" "$C_OFF"
-    local i=1; for line in "${lines[@]}"; do printf '  %d) %s\n' "$i" "${line#*$'\t'}"; i=$((i + 1)); done; echo
+    local i=1; for line in "${lines[@]}"; do printf '  %2d) %s\n' "$i" "${line#*$'\t'}"; i=$((i + 1)); done; echo
     read -r -p "Pick [1-${#ks[@]}], q to quit: " choice
     [[ "$choice" == q || -z "$choice" ]] && return 1
     [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ks[@]})) || die "bad choice: $choice"

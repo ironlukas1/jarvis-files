@@ -19,7 +19,7 @@ Never add a row with a guessed number. An unmeasured model is not ready to be li
 ## Field format
 
 ```
-key | name | quant | size | n-cpu-moe | tok/s | path | ctx | ngl | reasoning | chat-template
+key | name | quant | size | n-cpu-moe | tok/s | path | ctx | ngl | reasoning | chat-template | for
 ```
 
 | field | rule |
@@ -34,6 +34,7 @@ key | name | quant | size | n-cpu-moe | tok/s | path | ctx | ngl | reasoning | c
 | `ctx`, `ngl` | as configured. `ngl` blank means 99 / full offload. |
 | `reasoning` | `on`/`off`/`auto` → `--reasoning`; anything else → `--reasoning-effort`. |
 | `chat-template` | only when the GGUF's built-in template is wrong. |
+| `for` | why you would pick this one. `uncensored` when the tune is built that way, otherwise the job it does: `coding`, `images, OCR`, `reasoning, specs`, `eval only`. Two or three words. |
 
 ## Naming
 
@@ -51,12 +52,27 @@ Keep the uploader when the tune is the point (`DavidAU`, `Huihui`); drop it for 
 weights (`Qwen3.8-27B dense`). If two rows would collide, the `quant` column separates
 them — do not pad the name to disambiguate.
 
+## Calling something uncensored
+
+Take it from the tune's own name or card — `abliterated`, `heretic`, `uncensored` —
+not from testing it. A behaviour probe does not work here: on 2026-09-20 seven models
+were asked two things a guarded assistant typically declines, and **all seven answered,
+stock Qwen3.8-27B included**. This family is permissive by default, so a model passing
+a refusal probe tells you nothing about whether it was abliterated.
+
+If a tune makes no such claim, the field gets its purpose instead. Do not guess.
+
 ## The tok/s field carries no prose
 
 It used to be a free-text note ("fits RAM, tight", "mmap from Kingston, RAM+disk") and
 the table turned into commentary nobody could scan. Caveats — VRAM headroom, paging
 behaviour, what the model is for — go in the comment block above `MODELS`, where they
 do not cost a column.
+
+## Order
+
+Fastest first. The list is read by someone choosing a model, and on this box speed is
+the axis that varies most — 162 tok/s to 3.4.
 
 ## Keep it honest
 
