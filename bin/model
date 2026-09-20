@@ -33,7 +33,14 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # 0bserverx-heretic; ~/models-fast: the Flash-Next Q4/Q5/Q6/Q8 ladder) are therefore
 # not listed: add them to ~/.config/llama-swap/config.yaml first.
 #
-# The memory column carries measured speed — see docs/evals/benchmark-2026-09-20-all.md.
+# Speeds are measured (docs/evals/benchmark-2026-09-20-all.md), generation tok/s at
+# temperature 0.6. What the numbers do not say:
+#   turbo        MTP self-speculation; leaves only 1.3 GB VRAM free
+#   turbo-plain  no MTP, leaves 2.6 GB free — use it above temperature 1
+#   planner      the spec/review authority; q38-27b-q5 is the same weights at 100k ctx
+#   ocr-vlm      vision, 8k ctx, needs the mmproj file
+#   q38-q2/iq3x  experts spill to RAM and disk; paging-bound, so speed varies ±20%
+#   dsv4-q8      prefill is 6 tok/s — a 16k prompt takes ~45 min. Eval only.
 # Thinking levels were picked by eval, not taste: lowest level that still answers
 # multi-step questions correctly, because the priority here is speed.
 # The 52 tok/s figure needs --spec-type draft-mtp, which only the llama-swap entry
@@ -44,7 +51,7 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # this script does not start anything: it warms the id and points the clients at it.
 # The llama.service / start_direct paths below are the fallback for a box without it.
 #
-# rec: key | name | quant | size | n-cpu-moe | fit-note | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default; on/off/auto -> --reasoning, else -> --reasoning-effort) | chat-template file (blank = GGUF built-in)
+# rec: key | name | quant | size | n-cpu-moe | tok/s | path/id | ctx | ngl (blank = 99/full) | reasoning (blank = template default; on/off/auto -> --reasoning, else -> --reasoning-effort) | chat-template file (blank = GGUF built-in)
 # All dense qwen35 archs here have 65 blocks. The card is an RTX 3090 24 GB, so ~20 GB
 # of weights is the safe full-GPU ceiling (proven by turbo at Q5_K_M); the older -ngl
 # values below were sized for the 16 GB card this box used to have.
@@ -54,15 +61,15 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # complaint on Jarvis, not GPU speed. Pinned to "off" here so they behave like the
 # other conversational models. See memory: jarvis-smart-home-build.
 MODELS=(
-  "turbo|Qwen3.8-27B TURBO Fable-CF|Q5_K_M NEO-MTP|19.7 GiB|0|52 tok/s · MTP · 1.3 GB spare|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low"
-  "turbo-plain|Qwen3.8-27B TURBO (no MTP)|Q5_K_M NEO|19.3 GiB|0|34 tok/s · temp>1 · 2.6 GB spare|/home/ocino/models-27b/turbo/Q5_K_M.gguf|65536|99|low"
-  "planner|Qwen3.8-27B dense|UD-Q5_K_XL|19.4 GiB|0|34 tok/s · 64k · spec authority|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|65536|99|low"
-  "q38-27b-q5|Qwen3.8-27B dense (legacy id)|UD-Q5_K_XL|19.4 GiB|0|34 tok/s · 100k ctx · = planner|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|100000|99|"
-  "qwen3-coder-30b|Qwen3-Coder-30B-A3B|Q4_K_M|17.3 GiB|0|162 tok/s · fastest here|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|32768|99|off"
-  "ocr-vlm|Qwen3.8-27B VLM + mmproj|UD-IQ4_XS|14.2 GiB|0|43 tok/s · vision · 8k ctx|/home/ocino/models-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|8192|99|off"
-  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~74 GB|30|13 tok/s · experts in RAM|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
-  "q38-iq3x|Qwen3.8-Flash-Next|UD-IQ3_XXS|~77 GB|32|12 tok/s · experts in RAM|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|32768||"
-  "dsv4-q8|DeepSeek-V4-Flash-0731|UD-Q8_K_XL|~151 GB|43|3.4 tok/s · eval only · disk-bound|/mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf|32768||"
+  "turbo|Qwen3.8-27B TURBO Fable-CF|Q5_K_M NEO-MTP|19.7 GiB|0|52|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low"
+  "turbo-plain|Qwen3.8-27B TURBO (no MTP)|Q5_K_M NEO|19.3 GiB|0|34|/home/ocino/models-27b/turbo/Q5_K_M.gguf|65536|99|low"
+  "planner|Qwen3.8-27B dense|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|65536|99|low"
+  "q38-27b-q5|Qwen3.8-27B dense (legacy id)|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|100000|99|"
+  "qwen3-coder-30b|Qwen3-Coder-30B-A3B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|32768|99|off"
+  "ocr-vlm|Qwen3.8-27B VLM + mmproj|UD-IQ4_XS|14.2 GiB|0|43|/home/ocino/models-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|8192|99|off"
+  "q38-q2|Qwen3.8-Flash-Next|UD-Q2_K_XL|~74 GB|30|13|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|98304||"
+  "q38-iq3x|Qwen3.8-Flash-Next|UD-IQ3_XXS|~77 GB|32|12|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|32768||"
+  "dsv4-q8|DeepSeek-V4-Flash-0731|UD-Q8_K_XL|~151 GB|43|3.4|/mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf|32768||"
 )
 
 C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_C=$'\e[36m'
@@ -254,16 +261,16 @@ EOS
 
 cmd_list() {
   probe
-  printf '\n%s%-34s %-14s %-9s %-6s %s%s\n' "$C_B" "model" "quant" "size" "run?" "memory" "$C_OFF"
+  printf '\n%s%-34s %-16s %-9s %-6s %s%s\n' "$C_B" "model" "quant" "size" "moe" "tok/s" "$C_OFF"
   printf '%s%s%s\n' "$C_DIM" "$(printf '%.0s-' {1..92})" "$C_OFF"
   local rec key name quant size moe fit mark
   for rec in "${MODELS[@]}"; do
     IFS='|' read -r key name quant size moe fit _ <<<"$rec"
     if [[ "$key" == "$ACTIVE" ]]; then mark="${C_G}*${C_OFF}"; else mark=" "; fi
-    printf '%s %s%-33s%s %-14s %-9s %s%-6s %s%s\n' \
-      "$mark" "$C_C" "$name" "$C_OFF" "$quant" "$size" "$C_DIM" "$moe" "$fit" "$C_OFF"
+    printf '%s %s%-33s%s %-16s %-9s %s%-6s%s %s%s\n' \
+      "$mark" "$C_C" "$name" "$C_OFF" "$quant" "$size" "$C_DIM" "$moe" "$C_OFF" "$fit" "$C_OFF"
   done
-  printf '\n%s* = serving :8000 now   ·   run? = --n-cpu-moe value used%s\n\n' "$C_DIM" "$C_OFF"
+  printf '\n%s* = serving :8000 now   ·   moe = --n-cpu-moe value   ·   tok/s = measured generation%s\n\n' "$C_DIM" "$C_OFF"
 }
 
 cmd_status() {
@@ -352,7 +359,7 @@ pick() {
     IFS='|' read -r key name quant size _ fit _ <<<"$rec"
     local mark=" "; [[ "$key" == "$ACTIVE" ]] && mark="*"
     # field 1 is the key and stays hidden — the list itself shows model names only
-    lines+=("$(printf '%d\t%s %-33s %-14s %-9s  %s' "$idx" "$mark" "$name" "$quant" "$size" "$fit")")
+    lines+=("$(printf '%d\t%s %-33s %-16s %-9s %6s tok/s' "$idx" "$mark" "$name" "$quant" "$size" "$fit")")
     ks+=("$key")
     idx=$((idx + 1))
   done
