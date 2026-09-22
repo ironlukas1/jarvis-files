@@ -150,6 +150,46 @@ models:
         "qwen3-coder-30b:fast":
           reasoning_effort: none
 
+  # Efficiency profile on the coder weights — one model for a whole agent session, so
+  # nothing swaps mid-task (each swap costs ~11 s of load plus a full re-prefill).
+  # Sampling is the Qwen3-Coder-30B-A3B card's (temp 0.7, top_p 0.8, top_k 20,
+  # repetition 1.05), pinned by the filter so a client cannot drift it. Plain
+  # attention (qwen3moe), so --cache-reuse works here; it does not on the hybrid
+  # qwen35 27Bs. The 64k agent context cap lives in opencode (limit.context), not in
+  # -c: --fit still gives the server the full context.
+  "eco":
+    name: "Qwen3-Coder-30B-A3B (eco)"
+    description: "Coder weights tuned for a low-token, no-swap agent session."
+    cmd: >-
+      ${llama}
+      -m ${coder}/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+      ${common}
+      --reasoning off
+      --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0.0
+      --repeat-penalty 1.05
+      --cache-reuse 256
+      --cache-ram 16384
+      --log-file ${state}/eco.log
+      --log-timestamps
+      --port 8096
+    proxy: http://127.0.0.1:8096
+    env:
+      - "GGML_CUDA_DISABLE_GRAPHS=1"
+    ttl: 0
+    capabilities:
+      in: [text]
+      out: [text]
+      tools: true
+      context: 99584
+    filters:
+      setParamsByID:
+        eco:
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          repeat_penalty: 1.05
+
   "ocr-vlm":
     name: "Qwen3.8-27B VLM (OCR specialist)"
     description: "27B IQ4 + mmproj vision projector for scans, layout and table OCR."
@@ -466,6 +506,7 @@ routing:
             - planner
             - q38-27b-q5
             - qwen3-coder-30b
+            - eco
             - ocr-vlm
             - q38-q2
             - dsv4-q8

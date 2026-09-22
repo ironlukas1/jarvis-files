@@ -81,7 +81,14 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # reasoning_effort=xhigh (always-on, verbose thinking) — that is the slow-response
 # complaint on Jarvis, not GPU speed. Pinned to "off" here so they behave like the
 # other conversational models. See memory: jarvis-smart-home-build.
+#
+# eco is the coder weights run as a whole-session agent model: Qwen card sampling
+# pinned in llama-swap, prompt-cache reuse, and on the client side opencode gets a
+# 64k context cap, old-tool-output pruning and small_model = eco, so title/summary
+# calls never swap the GPU to another model. tok/s and ctx are qwen3-coder-30b's
+# (same file, same --fit); re-run bench-model eco after deploying.
 MODELS=(
+  "eco|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding, low-token"
   "qwen3-coder-30b|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding"
   "gsq-rco|Qwen3.8 27B GSQ-RCO|IQ3_S MTP|11.3 GiB|0|68|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|203264|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|fastest 27B"
   "heretic|Qwen3.8 27B Heretic|Q4_K_M MTP|15.8 GiB|0|63|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|101120|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|uncensored, multilingual"
@@ -218,6 +225,8 @@ write_opencode_config() { # write_opencode_config <key>
   local f="$OC_DIR/opencode.json"
   [[ -f "$f" ]] || echo '{"$schema":"https://opencode.ai/config.json"}' >"$f"
   local tmp; tmp=$(mktemp)
+  # eco's session profile is keyed on small_model == llamacpp/eco: it is set when eco
+  # is picked and removed (with the prune it came with) when any other key is.
   jq --argjson m "$models" --arg dm "$defmodel" '
     .["$schema"] //= "https://opencode.ai/config.json"
     | .model = $dm
@@ -225,6 +234,13 @@ write_opencode_config() { # write_opencode_config <key>
     | .provider.llamacpp.name //= "llama.cpp (jarvis tunnel :8000)"
     | .provider.llamacpp.options //= { baseURL:"http://localhost:8000/v1", apiKey:"local" }
     | .provider.llamacpp.models = ((.provider.llamacpp.models // {}) * $m)
+    | .provider.llamacpp.models.eco.limit = { context: 65536, output: 16384 }
+    | if $dm == "llamacpp/eco" then
+        .small_model = $dm | .compaction.auto = true | .compaction.prune = true
+      elif .small_model == "llamacpp/eco" then
+        del(.small_model) | del(.compaction.prune)
+        | if .compaction == {auto: true} then del(.compaction) else . end
+      else . end
     | del(.provider.openrouter)
   ' "$f" >"$tmp" && mv "$tmp" "$f" \
     && info "  opencode    default -> $defmodel (merged; other providers/agents kept)" \
