@@ -394,7 +394,7 @@ models:
       --fit-target 2600
       --spec-type draft-mtp
       --reasoning-effort low
-      --chat-template-file /home/ocino/jarvis-files/models/templates/qwen3.8-27b-gsq-rco.jinja
+      --chat-template-file /home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja
       --log-file ${state}/gsq-rco.log
       --log-timestamps
       --port 8093
