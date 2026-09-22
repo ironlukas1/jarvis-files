@@ -16,8 +16,10 @@ opencode -m llamacpp/turbo   # po `model turbo`
 #   ocr-vlm          43   obrázky / OCR
 #   huihui / swift   39   uncensored / general
 #   planner          34   stock 27B, reasoning + špecifikácie
-#   q38-q4/q5/q2/iq3x 12-17  veľké MoE, prefill 13-19 tok/s = dlhé prompty bolia
+#   q38-q4/q5/iq3x/q2  9-16  veľké MoE, 124k-262k ctx, ale prefill 13-19 tok/s
 #   dsv4-q8         3.4   len eval
 #
+# ctx: -c sa nikde nenastavuje, llama.cpp --fit vyberie najväčší ktorý sa zmestí
+# s plným offloadom (docs/model-rules.md). 99k-262k, dsv4 1M, turbo pinnutý 65k.
 # ":fast" alias na ktoromkoľvek = thinking off (extrakcia, formátovanie).
 # ssh config: jarvis ide priamo na 109.230.37.235 (router forwarduje :22 na .59), bez ProxyJump.

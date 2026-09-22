@@ -1,0 +1,67 @@
+{
+ "date": "2026-09-20",
+ "host": "jarvis RTX 3090 24GB",
+ "method": "-ngl 99 pinned, -c unset, llama.cpp --fit picks the largest context that keeps full GPU offload; --fit-target 1024",
+ "before": {
+  "planner": 65536,
+  "q38-27b-q5": 100000,
+  "qwen3-coder-30b": 32768,
+  "ocr-vlm": 8192,
+  "q38-q2": 98304,
+  "q38-iq3x": 32768,
+  "dsv4-q8": 32768,
+  "turbo": 65536,
+  "huihui": 32768,
+  "heretic": 32768,
+  "swift": 32768,
+  "gsq-rco": 32768,
+  "q38-q4": 32768,
+  "q38-q5": 32768
+ },
+ "after": {
+  "ocr-vlm": 225536,
+  "gsq-rco": 203264,
+  "huihui": 180992,
+  "swift": 171520,
+  "q38-q2": 262144,
+  "q38-q4": 262144,
+  "q38-q5": 243968,
+  "q38-iq3x": 124416,
+  "planner": 101632,
+  "heretic": 101120,
+  "qwen3-coder-30b": 99584,
+  "dsv4-q8": 1048576,
+  "turbo": 65536
+ },
+ "speed_medians_after": {
+  "gsq-rco": 68.5,
+  "heretic": 63.1,
+  "turbo": 51.3,
+  "note": "median of 3 via bin/bench-model; single-run figures during the sweep were noisier"
+ },
+ "fit_behaviour_gsq_rco": {
+  "ngl_set_c_set": {
+   "ctx": 32768,
+   "tps": 67.8,
+   "note": "--fit aborts"
+  },
+  "ngl_unset_c_262144": {
+   "ctx": 262144,
+   "tps": 16.5,
+   "note": "keeps ctx, spills layers"
+  },
+  "ngl_set_c_unset": {
+   "ctx": 200704,
+   "tps": 63.7,
+   "note": "the one we want"
+  }
+ },
+ "raw_measurements": [
+  {
+   "model": "turbo",
+   "vram_mib": 23242,
+   "ctx": 65536,
+   "gen_tps": 44.1
+  }
+ ]
+}

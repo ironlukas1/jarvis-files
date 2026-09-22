@@ -35,14 +35,20 @@ macros:
   models: /home/ocino/models-27b
   coder: /mnt/models2/coder
   state: /home/ocino/.local/state/llama-swap
-  # shared baseline: full GPU offload, q8_0 KV, fit to VRAM with a 2.6 GiB margin
-  # for the desktop compositor, no cuda graphs (proven unstable on this card).
+  # shared baseline: full GPU offload, q8_0 KV, no cuda graphs (proven unstable here).
+  #
+  # -ngl is pinned and -c is deliberately NOT set anywhere: --fit only adjusts
+  # arguments the config leaves unset, so this combination makes it pick the largest
+  # context that still keeps every layer on the GPU, per model, automatically. Setting
+  # both (as this config used to) made --fit abort and did nothing at all. Models with
+  # an MTP draft head override --fit-target, because their draft context is allocated
+  # after --fit has finished measuring.
   common: >-
     -ngl 99
     --jinja
     -fa on
     -ctk q8_0 -ctv q8_0
-    --fit on --fit-target 2704
+    --fit on --fit-target 1024
     --parallel 1
     -t 24
     --host 127.0.0.1
@@ -55,7 +61,6 @@ models:
       ${llama}
       -m ${models}/Qwen3.8-27B-UD-Q5_K_XL.gguf
       ${common}
-      -c 65536
       --reasoning-format deepseek
       --reasoning-preserve
       --reasoning-budget 800
@@ -76,7 +81,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 65536
+      context: 101632
     filters:
       setParamsByID:
         planner:
@@ -102,7 +107,6 @@ models:
       ${llama}
       -m ${models}/Qwen3.8-27B-UD-Q5_K_XL.gguf
       ${common}
-      -c 100000
       --log-file ${state}/q38-27b-q5.log
       --log-timestamps
       --port 8084
@@ -114,7 +118,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 100000
+      context: 101632
 
   "qwen3-coder-30b":
     name: "Qwen3-Coder-30B-A3B (executor)"
@@ -123,7 +127,6 @@ models:
       ${llama}
       -m ${coder}/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       ${common}
-      -c 32768
       --reasoning off
       --log-file ${state}/qwen3-coder-30b.log
       --log-timestamps
@@ -139,7 +142,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 99584
     filters:
       setParamsByID:
         coder:
@@ -155,7 +158,6 @@ models:
       -m ${models}/Qwen3.8-27B-UD-IQ4_XS.gguf
       -mm ${models}/mmproj-F16.gguf
       ${common}
-      -c 8192
       --reasoning off
       --log-file ${state}/ocr-vlm.log
       --log-timestamps
@@ -167,7 +169,7 @@ models:
     capabilities:
       in: [text, image]
       out: [text]
-      context: 16384
+      context: 225536
     filters:
       setParamsByID:
         "ocr-vlm:fast":
@@ -180,8 +182,7 @@ models:
       ${llama}
       -m /mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf
       ${common}
-      -ncmoe 30
-      -c 98304
+      -ncmoe 42
       --reasoning-effort low
       --log-file ${state}/q38-q2.log
       --log-timestamps
@@ -193,7 +194,7 @@ models:
     capabilities:
       in: [text]
       out: [text]
-      context: 98304
+      context: 262144
 
   "q38-iq3x":
     name: "Qwen3.8-Flash-Next UD-IQ3_XXS (deep planner)"
@@ -203,7 +204,6 @@ models:
       -m /mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf
       ${common}
       -ncmoe 32
-      -c 32768
       --reasoning-effort low
       --reasoning-budget 800
       --log-file ${state}/q38-iq3x.log
@@ -216,7 +216,7 @@ models:
     capabilities:
       in: [text]
       out: [text]
-      context: 32768
+      context: 124416
     aliases:
       - planner-deep
     filters:
@@ -233,7 +233,6 @@ models:
       -m /mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf
       ${common}
       -ncmoe 43
-      -c 32768
       --reasoning-format deepseek
       --reasoning-preserve
       --reasoning-budget 800
@@ -248,7 +247,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 1048576
 
 
   # DavidAU TURBO fine-tune of Qwen3.8-27B (NEO di-imatrix Q5_K_M, uncensored).
@@ -272,9 +271,9 @@ models:
       ${llama}
       -m ${models}/turbo/MTP-Q5_K_M.gguf
       ${common}
-      --fit-target 4080
-      --spec-type draft-mtp
+      --fit-target 2400
       -c 65536
+      --spec-type draft-mtp
       --temp 0.6
       --repeat-penalty 1.0
       --reasoning-format deepseek
@@ -314,7 +313,6 @@ models:
       ${llama}
       -m /mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
       ${common}
-      -c 32768
       --reasoning-effort low
       --log-file ${state}/huihui.log
       --log-timestamps
@@ -329,7 +327,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 180992
     filters:
       setParamsByID:
         "huihui:fast":
@@ -342,7 +340,7 @@ models:
       ${llama}
       -m /mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf
       ${common}
-      -c 32768
+      --fit-target 2600
       --spec-type draft-mtp
       --reasoning-effort low
       --chat-template-file /home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja
@@ -359,7 +357,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 101120
     filters:
       setParamsByID:
         "heretic:fast":
@@ -372,7 +370,6 @@ models:
       ${llama}
       -m /mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf
       ${common}
-      -c 32768
       --reasoning-effort low
       --log-file ${state}/swift.log
       --log-timestamps
@@ -385,7 +382,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 171520
 
   "gsq-rco":
     name: "Qwen3.8 27B GSQ-RCO"
@@ -394,9 +391,10 @@ models:
       ${llama}
       -m /mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
       ${common}
-      -c 32768
+      --fit-target 2600
       --spec-type draft-mtp
       --reasoning-effort low
+      --chat-template-file /home/ocino/jarvis-files/models/templates/qwen3.8-27b-gsq-rco.jinja
       --log-file ${state}/gsq-rco.log
       --log-timestamps
       --port 8093
@@ -408,7 +406,7 @@ models:
       in: [text]
       out: [text]
       tools: true
-      context: 32768
+      context: 203264
 
   # --- the rest of the Flash-Next ladder ------------------------------------
   # 104 GB and 148 GB against 62 GB of RAM: these stream from the Kingston the whole
@@ -421,8 +419,7 @@ models:
       ${llama}
       -m /home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
       ${common}
-      -ncmoe 38
-      -c 32768
+      -ncmoe 44
       --reasoning-effort low
       --log-file ${state}/q38-q4.log
       --log-timestamps
@@ -434,7 +431,7 @@ models:
     capabilities:
       in: [text]
       out: [text]
-      context: 32768
+      context: 262144
 
   "q38-q5":
     name: "Qwen3.8 Flash-Next Q5"
@@ -444,7 +441,6 @@ models:
       -m /home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf
       ${common}
       -ncmoe 42
-      -c 32768
       --reasoning-effort low
       --log-file ${state}/q38-q5.log
       --log-timestamps
@@ -456,7 +452,7 @@ models:
     capabilities:
       in: [text]
       out: [text]
-      context: 32768
+      context: 243968
 
 routing:
   router:
@@ -499,7 +495,19 @@ peers:
     proxy: http://192.168.100.23:8080
     models:
       - executor
+    timeouts:
+      connect: 30
+      keepalive: 30
+      responseHeader: 600
+      tlsHandshake: 10
+      idleConn: 600
   filipko:
     proxy: http://192.168.100.7:8080
     models:
       - governor
+    timeouts:
+      connect: 30
+      keepalive: 30
+      responseHeader: 600
+      tlsHandshake: 10
+      idleConn: 600

@@ -3,6 +3,41 @@
 What a row in `bin/model`'s `MODELS` array is allowed to say. Follow these and the
 listing stays a table of facts instead of a pile of notes.
 
+## Context: give every model the most it can hold
+
+Do not hard-code `-c`. In `config.yaml`, pin `-ngl 99` and leave `-c` unset, and
+llama.cpp's `--fit` gives the model the largest context that still keeps every layer
+on the GPU. It re-decides on its own when the quant or the card changes, which a
+hard-coded number does not.
+
+This only works when exactly one of the two is set. `--fit` adjusts the arguments the
+config leaves **unset**:
+
+| `-ngl` | `-c` | what `--fit` does |
+|---|---|---|
+| set | set | nothing — aborts with "n_gpu_layers already set by user" |
+| unset | set | keeps your context, moves layers to CPU — **4x slower**, do not do this |
+| **set** | **unset** | **picks the biggest context that still fits. This is the one.** |
+
+Two things to watch:
+
+- **The VRAM margin is what caps context.** `--fit-target` is per-device MiB left free;
+  every MiB reserved is context not allocated. It is 1024 here. Raise it if the desktop
+  needs the card, and expect context to drop across the board.
+- **`--fit` cannot see an MTP draft context.** It is allocated after `--fit` finishes
+  measuring and grows with the context, so an MTP model can be handed a context that
+  then OOMs on load. Give those a larger `--fit-target`, and pin `-c` outright if the
+  weights are big enough that the margin leaves nothing (this is why `turbo` is the
+  one model with a hard-coded context).
+
+Then record what it chose in the row, and re-measure after changing quant, `-ncmoe`,
+`--fit-target` or the GPU. A context in the table that llama.cpp did not actually
+choose is a lie with a number on it.
+
+Where context and speed genuinely fight — a MoE whose `-ncmoe` is spending the VRAM
+that KV needs — context wins for a model kept for breadth, speed wins for one kept for
+throughput. Say which in the `for` column.
+
 ## Order of work
 
 1. **Wire it into llama-swap first.** `~/.config/llama-swap/config.yaml` on jarvis
@@ -31,7 +66,8 @@ key | name | quant | size | n-cpu-moe | tok/s | path | ctx | ngl | reasoning | c
 | `n-cpu-moe` | `--n-cpu-moe` for MoEs that spill to RAM, `0` otherwise. |
 | `tok/s` | **a number and nothing else.** `52`, `162`, `3.4`. |
 | `path` | absolute path to the GGUF on jarvis. |
-| `ctx`, `ngl` | as configured. `ngl` blank means 99 / full offload. |
+| `ctx` | the context `--fit` chose — measured, not picked. See **Context** below. |
+| `ngl` | blank means 99 / full offload. |
 | `reasoning` | `on`/`off`/`auto` → `--reasoning`; anything else → `--reasoning-effort`. |
 | `chat-template` | only when the GGUF's built-in template is wrong. |
 | `for` | why you would pick this one. `uncensored` when the tune is built that way, otherwise the job it does: `coding`, `images, OCR`, `reasoning, specs`, `eval only`. Two or three words. |
