@@ -1,16 +1,11 @@
 [Unit]
-Description=llama.cpp server - Qwen3.8-Flash-Next Q2_K_XL (alias qwen38)
+Description=llama.cpp server - Qwen3.8-27B UD-Q5_K_XL (alias q38-27b-q5)
 After=network-online.target
-Wants=network-online.target
-
 
 [Service]
-Type=simple
-ExecStart=/home/ocino/llama.cpp/build-cuda/bin/llama-server -m /mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf --alias qwen38 -ngl 99 --n-cpu-moe 42 -t 24 -c 98304 --parallel 1 --jinja -b 2048 -ub 512 --n-predict 16384 --host 127.0.0.1 --port 8000
-Restart=always
+ExecStart=/home/ocino/llama.cpp/build-3090/bin/llama-server -m /home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf --alias q38-27b-q5 -ngl 99 --cache-type-k q8_0 --cache-type-v q8_0 -t 24 -c 100000 --parallel 1 --jinja -b 2048 -ub 512 --host 127.0.0.1 --port 8000
+Restart=on-failure
 RestartSec=10
-TimeoutStartSec=900
-KillMode=mixed
 
 [Install]
 WantedBy=default.target
