@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# local — run the laptop-local LLM. Two commands: on, off.
+set -uo pipefail
+
+# The fallback brain for when jarvis (:8000) is unreachable. Different port on
+# purpose: 8000 and 11434 are the ssh tunnel to jarvis, 8777 is jarvismon-web.
+PORT="${LOCAL_PORT:-8080}"
+GGUF="${LOCAL_GGUF:-$HOME/models/lfm2/LFM2.5-8B-A1B-Q4_0.gguf}"
+CTX="${LOCAL_CTX:-16384}"
+ALIAS="${LOCAL_ALIAS:-lfm2}"
+LOG="$HOME/logs/local-llm.log"
+OC_DIR="${OC_DIR:-$HOME/.config/opencode}"
+PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
+
+# -t 4, not 8. Measured on cachyT15 2026-09-20: 4 threads 18.4 tok/s, 8 threads
+# 13.3. The hyperthreads lose 28% even though a raw bandwidth benchmark prefers
+# them — decode here is compute-bound, not bandwidth-bound. Same reason the
+# DSpark drafter is not wired in: speculation made it monotonically worse
+# (13.2 / 10.9 / 7.1 tok/s at n-max 3 / 2 / 6).
+THREADS="${LOCAL_THREADS:-4}"
+
+C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'
+[[ -t 1 ]] || { C_OFF=; C_DIM=; C_B=; C_G=; C_Y=; C_R=; }
+
+die()  { printf '%serror:%s %s\n' "$C_R" "$C_OFF" "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+
+up()  { curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; }
+pids() { pgrep -f "llama-server .*--port $PORT" 2>/dev/null; }
+
+register_opencode() {
+  # Its own provider key on purpose. bin/model rewrites .provider.llamacpp from
+  # its MODELS table on every switch but merges the rest, so .provider.local
+  # survives untouched — no drift, nothing to re-add by hand.
+  [[ -d "$OC_DIR" ]] || return 0
+  command -v jq >/dev/null || { printf '  %sopencode    jq missing, skipped%s\n' "$C_Y" "$C_OFF"; return 0; }
+  local f="$OC_DIR/opencode.json" tmp
+  [[ -f "$f" ]] || echo '{"$schema":"https://opencode.ai/config.json"}' >"$f"
+  tmp=$(mktemp)
+  jq --arg url "http://127.0.0.1:$PORT/v1" --arg id "$ALIAS" \
+     --arg pname "laptop-local (llama.cpp :$PORT)" '
+      .["$schema"] //= "https://opencode.ai/config.json"
+    | .provider.local.npm = "@ai-sdk/openai-compatible"
+    | .provider.local.name = $pname
+    | .provider.local.options = { baseURL: $url, apiKey: "local" }
+    | .provider.local.models[$id] = { name: "LFM2.5-8B-A1B Q4_0 (cachyT15, ~18 tok/s)" }
+  ' "$f" >"$tmp" && cat "$tmp" >"$f" \
+    || printf '  %sopencode    registration failed%s\n' "$C_Y" "$C_OFF"
+  rm -f "$tmp"
+}
+
+register_pi() {
+  # Unlike the opencode writer, bin/model's write_pi_config rebuilds models.json
+  # with `jq -n` — it overwrites. So this has to re-add the provider every time,
+  # which is exactly why it lives here and not in a one-off hand edit.
+  [[ -d "$PI_DIR" ]] || return 0
+  command -v jq >/dev/null || return 0
+  local f="$PI_DIR/models.json" tmp
+  [[ -f "$f" ]] || echo '{"providers":{}}' >"$f"
+  tmp=$(mktemp)
+  jq --arg url "http://127.0.0.1:$PORT/v1" --arg id "$ALIAS" '
+    .providers.local = {
+      baseUrl: $url, api: "openai-completions", apiKey: "local",
+      models: [ { id: $id, name: "LFM2.5-8B-A1B Q4_0 (laptop)" } ]
+    }
+  ' "$f" >"$tmp" && cat "$tmp" >"$f" \
+    || printf '  %spi          registration failed%s\n' "$C_Y" "$C_OFF"
+  rm -f "$tmp"
+}
+
+cmd_on() {
+  up && { register_opencode; register_pi
+          info "${C_G}Already up${C_OFF} on http://127.0.0.1:$PORT  ${C_DIM}(opencode -m local/$ALIAS)${C_OFF}"
+          return 0; }
+  command -v llama-server >/dev/null || die "llama-server not found (pacman -S llama-cpp)"
+  [[ -f "$GGUF" ]] || die "model missing: $GGUF"
+
+  mkdir -p "$(dirname "$LOG")"
+  printf '%sStarting%s %s on :%s ' "$C_B" "$C_OFF" "$(basename "$GGUF")" "$PORT"
+  setsid llama-server -m "$GGUF" -t "$THREADS" -c "$CTX" -fa on --jinja \
+    --host 127.0.0.1 --port "$PORT" --alias "$ALIAS" \
+    </dev/null >"$LOG" 2>&1 &
+  disown 2>/dev/null
+
+  # 4.5 GiB off a cold page cache is the slow case; warm it is a few seconds.
+  for _ in $(seq 1 60); do
+    up && { register_opencode; register_pi
+            printf '\n\n%sready%s  http://127.0.0.1:%s   %s(~18 tok/s)%s\n\n' \
+              "$C_G" "$C_OFF" "$PORT" "$C_DIM" "$C_OFF"
+            printf '  opencode -m local/%s\n' "$ALIAS"
+            printf '  pi --provider local --model %s --system-prompt "You are a helpful assistant."\n' "$ALIAS"
+            printf '  %s(pi without --system-prompt sends ~10.8k tokens = ~6 min of prefill)%s\n\n' "$C_DIM" "$C_OFF"
+            return 0; }
+    [[ -n "$(pids)" ]] || { printf '\n\n%sdied%s\n' "$C_R" "$C_OFF"; tail -20 "$LOG"; return 1; }
+    printf '.'; sleep 2
+  done
+  printf '\n\n%stimeout%s after 120s\n' "$C_R" "$C_OFF"; tail -20 "$LOG"; return 1
+}
+
+cmd_off() {
+  if [[ -z "$(pids)" ]]; then info "Nothing running on :$PORT."; return 0; fi
+  info "Stopping llama-server on :$PORT..."
+  pkill -f "llama-server .*--port $PORT" 2>/dev/null
+  for _ in $(seq 1 15); do [[ -z "$(pids)" ]] && { info "${C_G}Stopped.${C_OFF}"; return 0; }; sleep 1; done
+  pkill -9 -f "llama-server .*--port $PORT" 2>/dev/null
+  [[ -z "$(pids)" ]] && info "${C_G}Stopped${C_OFF} (needed SIGKILL)." || die "still running on :$PORT"
+}
+
+usage() {
+  local state
+  if up; then state="${C_G}on${C_OFF}  http://127.0.0.1:$PORT"; else state="${C_Y}off${C_OFF}"; fi
+  cat <<EOF
+local — the laptop-local LLM (LFM2.5-8B-A1B Q4_0, ~18 tok/s)
+
+  local on           start it on :$PORT
+  local off          stop it
+
+  opencode: registered as local/$ALIAS on every "local on"
+
+  now: $state
+
+$(printf '%s' "$C_DIM")Env: LOCAL_PORT LOCAL_GGUF LOCAL_CTX LOCAL_THREADS LOCAL_ALIAS
+Log: $LOG$(printf '%s' "$C_OFF")
+EOF
+}
+
+case "${1:-}" in
+  on)              cmd_on ;;
+  off)             cmd_off ;;
+  "" | -h | --help) usage ;;
+  *)               printf '%sunknown command: %s%s\n\n' "$C_R" "$1" "$C_OFF"; usage; exit 1 ;;
+esac
