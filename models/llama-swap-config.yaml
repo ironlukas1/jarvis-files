@@ -64,6 +64,7 @@ models:
       --reasoning-format deepseek
       --reasoning-preserve
       --reasoning-budget 800
+      --n-predict 16384
       --log-file ${state}/planner.log
       --log-timestamps
       --port 8081
@@ -87,18 +88,23 @@ models:
         planner:
           reasoning_effort: low
           temperature: 0.2
+          max_tokens: 16384
         "planner:fast":
           reasoning_effort: none
           temperature: 0.0
+          max_tokens: 16384
         critic:
           reasoning_effort: low
           temperature: 0.2
+          max_tokens: 16384
         "critic:fast":
           reasoning_effort: none
           temperature: 0.0
+          max_tokens: 16384
         ocr-review:
           reasoning_effort: none
           temperature: 0.0
+          max_tokens: 16384
 
   "q38-27b-q5":
     name: "Qwen3.8-27B UD-Q5_K_XL (legacy)"
@@ -147,8 +153,10 @@ models:
       setParamsByID:
         coder:
           reasoning_effort: medium
+          max_tokens: 16384
         "qwen3-coder-30b:fast":
           reasoning_effort: none
+          max_tokens: 16384
 
   # Efficiency profile on the coder weights — one model for a whole agent session, so
   # nothing swaps mid-task (each swap costs ~11 s of load plus a full re-prefill).
@@ -189,6 +197,7 @@ models:
           top_k: 20
           min_p: 0.0
           repeat_penalty: 1.05
+          max_tokens: 16384
 
   "ocr-vlm":
     name: "Qwen3.8-27B VLM (OCR specialist)"
@@ -215,95 +224,6 @@ models:
         "ocr-vlm:fast":
           temperature: 0.0
 
-  "q38-q2":
-    name: "Qwen3.8-Flash-Next UD-Q2_K_XL (fallback/eval)"
-    description: "Big MoE, experts spill to RAM. Kept for evals and the voice fallback path."
-    cmd: >-
-      ${llama}
-      -m /mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf
-      ${common}
-      -ncmoe 42
-      --reasoning-effort low
-      --log-file ${state}/q38-q2.log
-      --log-timestamps
-      --port 8085
-    proxy: http://127.0.0.1:8085
-    env:
-      - "GGML_CUDA_DISABLE_GRAPHS=1"
-    ttl: 0
-    capabilities:
-      in: [text]
-      out: [text]
-      context: 262144
-
-  "q38-iq3x":
-    name: "Qwen3.8-Flash-Next UD-IQ3_XXS (deep planner)"
-    description: "Big MoE 76GB, mostly RAM-resident. Local planner-deep: najviac vedomosti, ktore vlezu lokálne."
-    cmd: >-
-      ${llama}
-      -m /mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf
-      ${common}
-      -ncmoe 32
-      --reasoning-effort low
-      --reasoning-budget 800
-      --log-file ${state}/q38-iq3x.log
-      --log-timestamps
-      --port 8087
-    proxy: http://127.0.0.1:8087
-    env:
-      - "GGML_CUDA_DISABLE_GRAPHS=1"
-    ttl: 0
-    capabilities:
-      in: [text]
-      out: [text]
-      context: 124416
-    aliases:
-      - planner-deep
-    filters:
-      setParamsByID:
-        planner-deep:
-          reasoning_effort: low
-          temperature: 0.2
-
-  "dsv4-q8":
-    name: "DeepSeek-V4-Flash UD-Q8_K_XL (eval)"
-    description: "Local 284B/13B-active MoE, Q8, experts spill to RAM. 3-4 tok/s — eval only."
-    cmd: >-
-      ${llama}
-      -m /mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf
-      ${common}
-      -ncmoe 43
-      --reasoning-format deepseek
-      --reasoning-preserve
-      --reasoning-budget 800
-      --log-file ${state}/dsv4-q8.log
-      --log-timestamps
-      --port 8086
-    proxy: http://127.0.0.1:8086
-    env:
-      - "GGML_CUDA_DISABLE_GRAPHS=1"
-    ttl: 0
-    capabilities:
-      in: [text]
-      out: [text]
-      tools: true
-      context: 1048576
-
-
-  # DavidAU TURBO fine-tune of Qwen3.8-27B (NEO di-imatrix Q5_K_M, uncensored).
-  # MTP quant + self-speculation -> ~52 tok/s, draft acceptance 58-77%.
-  # Measured 2026-09-20, see docs/evals/benchmark-2026-09-20-turbo.md.
-  # The non-MTP file of the same tune was dropped on request; it is still on disk at
-  # ~/models-27b/turbo/Q5_K_M.gguf (19.3 GiB) if it is ever wanted back.
-  #
-  # The tune's template defaults to reasoning_effort xhigh. Benchmarked here at
-  # low (14/15 checkable tasks) vs off (10/15): off blows multi-step arithmetic,
-  # date maths and counting, so low is the default and off lives on ":fast",
-  # which is for extraction/formatting, not reasoning.
-  #
-  # fit-target is 4080 rather than the shared 2704: the MTP draft context is
-  # allocated after --fit does its sums and costs ~1.4 GB, so the lower target
-  # left only 1.3 GB for the desktop.
   "turbo":
     name: "Qwen3.8-27B TURBO Fable-CF (MTP)"
     description: "DavidAU TURBO tune, Q5_K_M NEO imatrix, uncensored, short thinking blocks. MTP self-speculation, ~52 tok/s."
@@ -452,103 +372,3 @@ models:
   # 104 GB and 148 GB against 62 GB of RAM: these stream from the Kingston the whole
   # time they run. -ncmoe guessed from the Q2 retune and the size ratio; if either
   # OOMs, raise it.
-  "q38-q4":
-    name: "Qwen3.8 Flash-Next Q4"
-    description: "Flash-Next UD-Q4_K_XL, 104 GB. Mostly disk-resident."
-    cmd: >-
-      ${llama}
-      -m /home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
-      ${common}
-      -ncmoe 44
-      --reasoning-effort low
-      --log-file ${state}/q38-q4.log
-      --log-timestamps
-      --port 8094
-    proxy: http://127.0.0.1:8094
-    env:
-      - "GGML_CUDA_DISABLE_GRAPHS=1"
-    ttl: 0
-    capabilities:
-      in: [text]
-      out: [text]
-      context: 262144
-
-  "q38-q5":
-    name: "Qwen3.8 Flash-Next Q5"
-    description: "Flash-Next UD-Q5_K_XL, 148 GB. Mostly disk-resident."
-    cmd: >-
-      ${llama}
-      -m /home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf
-      ${common}
-      -ncmoe 42
-      --reasoning-effort low
-      --log-file ${state}/q38-q5.log
-      --log-timestamps
-      --port 8095
-    proxy: http://127.0.0.1:8095
-    env:
-      - "GGML_CUDA_DISABLE_GRAPHS=1"
-    ttl: 0
-    capabilities:
-      in: [text]
-      out: [text]
-      context: 243968
-
-routing:
-  router:
-    use: group
-    settings:
-      groups:
-        default:
-          swap: true
-          exclusive: true
-          members:
-            - planner
-            - q38-27b-q5
-            - qwen3-coder-30b
-            - eco
-            - ocr-vlm
-            - q38-q2
-            - dsv4-q8
-            - q38-iq3x
-            - turbo
-            - huihui
-            - heretic
-            - swift
-            - gsq-rco
-            - q38-q4
-            - q38-q5
-
-hooks:
-  on_startup:
-    preload:
-      - planner
-
-# Remote llama-swap instances joined as native peers (llama-swap v242+ peer routing).
-# Peer model IDs must match what each instance exposes. Addressable on Jarvis as
-# petko/<model> and filipko/<model> (FQN). Plain LAN peering, no tailcat token:
-# all three hosts are on 192.168.100.0/24 with firewall rules scoped to that subnet.
-#
-#   petko   192.168.100.23  executor model  -> Qwen3-14B  Q4_K_M (RTX 5070 12GB)
-#   filipko 192.168.100.7   governor model  -> Qwen3-14B  Q6_K   (RTX 5070 Ti 16GB)
-peers:
-  petko:
-    proxy: http://192.168.100.23:8080
-    models:
-      - executor
-    timeouts:
-      connect: 30
-      keepalive: 30
-      responseHeader: 600
-      tlsHandshake: 10
-      idleConn: 600
-  filipko:
-    proxy: http://192.168.100.7:8080
-    models:
-      - governor
-    timeouts:
-      connect: 30
-      keepalive: 30
-      responseHeader: 600
-      tlsHandshake: 10
-      idleConn: 600

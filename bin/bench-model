@@ -14,7 +14,7 @@ export LC_NUMERIC=C
 ID="${1:-}"
 RUNS="${2:-3}"
 ENDPOINT="${BENCH_ENDPOINT:-http://localhost:8000}"
-REMOTE="${MODEL_REMOTE:-jarvis}"
+REMOTE="${MODEL_REMOTE:-p620}"
 [[ -n "$ID" ]] || { echo "usage: bench-model <llama-swap-id> [runs]" >&2; exit 1; }
 command -v jq >/dev/null || { echo "bench-model: jq required" >&2; exit 1; }
 

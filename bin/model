@@ -2,18 +2,19 @@
 # model — pick a Jarvis model and bring it up end to end.
 set -uo pipefail
 
-REMOTE="${MODEL_REMOTE:-jarvis}"
+REMOTE="${MODEL_REMOTE:-p620}"
 TUNNEL="${MODEL_TUNNEL:-llm-tunnel}"
 PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
 OC_DIR="${OC_DIR:-$HOME/.config/opencode}"
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15"
 
-# Same script runs on a client (drives jarvis over ssh) and on jarvis itself.
-# Deploy:  scp bin/model jarvis:~/.local/bin/model  &&  ssh jarvis chmod 755 ~/.local/bin/model
+# Same script runs on a client (drives the AI box over ssh) and on the AI box itself.
+# Since 2026-10-11 the AI box is the P620 (.68, RTX 3090); jarvis (.59) is the homelab.
+# Deploy:  the P620 runs it from its ~/jarvis-files clone (git pull there).
 IS_LOCAL=0
-[[ "$(hostname 2>/dev/null)" =~ ^(jarvis|jarvis59|192\.168\.100\.59)$ ]] && IS_LOCAL=1
-HOSTLBL='client -> jarvis'
-[[ "$IS_LOCAL" == 1 ]] && HOSTLBL='jarvis (local)'
+[[ "$(hostname 2>/dev/null)" =~ ^(p620|192\.168\.100\.68)$ ]] && IS_LOCAL=1
+HOSTLBL="client -> $REMOTE"
+[[ "$IS_LOCAL" == 1 ]] && HOSTLBL="$(hostname) (local)"
 
 rsh() { # rsh '<snippet>' — one command, no args
   if [[ "$IS_LOCAL" == 1 ]]; then bash -c "$1"
@@ -24,8 +25,9 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
   else $SSH "$REMOTE" bash -s -- "$@"; fi
 }
 
-# All local models are llama.cpp GGUFs on jarvis (/mnt/models2, ~/models-27b,
-# ~/models-fast, ~/models-ds), served on :8000. One serves at a time.
+# All local models are llama.cpp GGUFs on the P620 (/mnt/models2, ~/models-27b),
+# served on :8000. One serves at a time. Only models that fit entirely in the
+# 3090's 24 GB are kept: the Flash-Next ladder and dsv4-q8 were dropped 2026-10-11.
 #
 # The keys below mirror llama-swap's catalogue one for one — that is the only list
 # that can actually be served. Weights that exist on disk but are NOT wired into
@@ -88,20 +90,15 @@ rexec() { # rexec [args...]  — script on stdin, args as $1..$n
 # calls never swap the GPU to another model. tok/s and ctx are qwen3-coder-30b's
 # (same file, same --fit); re-run bench-model eco after deploying.
 MODELS=(
-  "eco|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding, low-token"
-  "qwen3-coder-30b|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|162|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding"
-  "gsq-rco|Qwen3.8 27B GSQ-RCO|IQ3_S MTP|11.3 GiB|0|68|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|203264|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|fastest 27B"
-  "heretic|Qwen3.8 27B Heretic|Q4_K_M MTP|15.8 GiB|0|63|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|101120|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|uncensored, multilingual"
-  "turbo|DavidAU Qwen3.8 27B TURBO|Q5_K_M NEO-MTP|19.7 GiB|0|51|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low||uncensored, coder"
+  "eco|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|135|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding, low-token"
+  "qwen3-coder-30b|Qwen3 Coder 30B|Q4_K_M|17.3 GiB|0|161|/mnt/models2/coder/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf|99584|99|off||coding"
+  "gsq-rco|Qwen3.8 27B GSQ-RCO|IQ3_S MTP|11.3 GiB|0|73|/mnt/models2/candidates/gsq-rco/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf|203264|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|fastest 27B"
+  "heretic|Qwen3.8 27B Heretic|Q4_K_M MTP|15.8 GiB|0|71|/mnt/models2/candidates/0bserverx-heretic/RVN-Q4_K_M-multilingual-mtp.gguf|101120|99|low|/home/ocino/jarvis-files/models/templates/qwen38-27b-unsloth.jinja|uncensored, multilingual"
+  "turbo|DavidAU Qwen3.8 27B TURBO|Q5_K_M NEO-MTP|19.7 GiB|0|60|/home/ocino/models-27b/turbo/MTP-Q5_K_M.gguf|65536|99|low||uncensored, coder"
   "ocr-vlm|Qwen3.8 27B Vision|UD-IQ4_XS|14.2 GiB|0|43|/home/ocino/models-27b/Qwen3.8-27B-UD-IQ4_XS.gguf|225536|99|off||images, OCR"
   "huihui|Huihui Qwen3.8 27B|UD-Q4_K_XL|16.2 GiB|0|39|/mnt/models2/candidates/huihui-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf|180992|99|low||uncensored"
   "swift|Swift Qwen3.8 27B|Q4_K_M|16.8 GiB|0|39|/mnt/models2/candidates/swift/Swift-Qwen3.8-27B-Q4_K_M.gguf|171520|99|low||general chat"
   "planner|Qwen3.8 27B (stock)|UD-Q5_K_XL|19.4 GiB|0|34|/home/ocino/models-27b/Qwen3.8-27B-UD-Q5_K_XL.gguf|101632|99|low||reasoning, specs"
-  "q38-q4|Qwen3.8 Flash-Next|UD-Q4_K_XL|~104 GB|38|16|/home/ocino/models-fast/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf|262144||low||knowledge breadth"
-  "q38-q5|Qwen3.8 Flash-Next|UD-Q5_K_XL|~148 GB|42|15|/home/ocino/models-fast/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf|243968||low||knowledge breadth"
-  "q38-iq3x|Qwen3.8 Flash-Next|UD-IQ3_XXS|~77 GB|32|11|/mnt/models2/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf|124416||low||knowledge breadth"
-  "q38-q2|Qwen3.8 Flash-Next|UD-Q2_K_XL|~74 GB|30|9|/mnt/models2/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf|262144||low||knowledge breadth"
-  "dsv4-q8|DeepSeek V4 Flash 284B|UD-Q8_K_XL|~151 GB|43|3.4|/mnt/models2/deepseek-v4/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf|1048576||||eval only"
 )
 
 C_OFF=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_C=$'\e[36m'
@@ -176,7 +173,7 @@ tunnel_up() {
   ss -ltn 2>/dev/null | grep -qE '127\.0\.0\.1:(8000|11434)'
 }
 ensure_tunnel() {
-  [[ "$IS_LOCAL" == 1 ]] && { info "  tunnel      not needed (running on jarvis)"; return 0; }
+  [[ "$IS_LOCAL" == 1 ]] && { info "  tunnel      not needed (running on the AI box)"; return 0; }
   tunnel_up && { info "  tunnel      up (8000, 11434)"; return 0; }
   ssh -N -f -o BatchMode=yes -o ExitOnForwardFailure=yes "$TUNNEL" 2>/dev/null &&
     info "  tunnel      started (8000, 11434)" ||
@@ -231,7 +228,7 @@ write_opencode_config() { # write_opencode_config <key>
     .["$schema"] //= "https://opencode.ai/config.json"
     | .model = $dm
     | .provider.llamacpp.npm = "@ai-sdk/openai-compatible"
-    | .provider.llamacpp.name //= "llama.cpp (jarvis tunnel :8000)"
+    | .provider.llamacpp.name //= "llama.cpp (p620 tunnel :8000)"
     | .provider.llamacpp.options //= { baseURL:"http://localhost:8000/v1", apiKey:"local" }
     | .provider.llamacpp.models = ((.provider.llamacpp.models // {}) * $m)
     | .provider.llamacpp.models.eco.limit = { context: 65536, output: 16384 }
@@ -329,7 +326,7 @@ cmd_status() {
   if [[ -z "$ACTIVE" ]]; then printf '%snothing on :8000%s\n' "$C_Y" "$C_OFF"
   else printf '%s%s%s\n' "$C_G" "$(active_label)" "$C_OFF"; fi
   if [[ "$IS_LOCAL" == 1 ]]; then
-    printf '  tunnel     %sn/a (on jarvis)%s\n' "$C_DIM" "$C_OFF"
+    printf '  tunnel     %sn/a (on the AI box)%s\n' "$C_DIM" "$C_OFF"
   else
     printf '  tunnel     '; tunnel_up && printf '%sup%s\n' "$C_G" "$C_OFF" || printf '%sdown%s\n' "$C_Y" "$C_OFF"
   fi
@@ -470,7 +467,7 @@ swap_switch() { # swap_switch <key> <name> <quant> — llama-swap loads on deman
   local key="$1" name="$2" quant="$3"
   if ! swap_json | grep -q "\"id\":\"$key\""; then
     printf '\n%s%s is not in the llama-swap catalogue on :8000.%s\n' "$C_R" "$key" "$C_OFF"
-    info "Add it to ~/.config/llama-swap/config.yaml on jarvis — it reloads on save."
+    info "Add it to ~/.config/llama-swap/config.yaml on the P620 — it reloads on save."
     return 1
   fi
   printf '\n%sSwitching to %s %s%s\n' "$C_B" "$name" "$quant" "$C_OFF"

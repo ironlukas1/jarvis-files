@@ -2,8 +2,8 @@
 # local — run the laptop-local LLM. Two commands: on, off.
 set -uo pipefail
 
-# The fallback brain for when jarvis (:8000) is unreachable. Different port on
-# purpose: 8000 and 11434 are the ssh tunnel to jarvis, 8777 is jarvismon-web.
+# The fallback brain for when the P620 (:8000) is unreachable. Different port on
+# purpose: 8000 and 11434 are the ssh tunnel to the P620, 8777 is jarvismon-web.
 PORT="${LOCAL_PORT:-8080}"
 GGUF="${LOCAL_GGUF:-$HOME/models/lfm2/LFM2.5-8B-A1B-Q4_0.gguf}"
 CTX="${LOCAL_CTX:-16384}"
