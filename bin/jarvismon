@@ -382,6 +382,55 @@ def _dur(d):
     return d
 
 
+LS_ACT_DB = os.path.expanduser("~/.local/state/llama-swap/activity.sqlite")
+
+
+def _llama_swap_activity():
+    """llama-swap requests in the last 6 h + currently loaded model(s)."""
+    import sqlite3, datetime, urllib.request
+    out = {"running": [], "events": [], "n": 0, "tin": 0, "tout": 0,
+           "err": 0}
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8000/running",
+                                    timeout=1) as r:
+            for m in json.load(r).get("running") or []:
+                port = (m.get("proxy") or "").rsplit(":", 1)[-1]
+                out["running"].append((m.get("model", "?"),
+                                       m.get("state", "?"), port))
+    except Exception:
+        out["running"] = None
+    if not os.path.exists(LS_ACT_DB):
+        return out if out["running"] is not None else None
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % LS_ACT_DB, uri=True,
+                            timeout=1)
+        since = int(time.time()) - 6 * 3600
+        n, tin, tout, err = c.execute(
+            "select count(*), coalesce(sum(input_tokens),0), "
+            "coalesce(sum(output_tokens),0), "
+            "coalesce(sum(resp_status_code >= 400 or error_msg != ''),0) "
+            "from activity where ts_created >= ?", (since,)).fetchone()
+        out.update(n=n, tin=tin, tout=tout, err=err)
+        rows = c.execute(
+            "select ts_created, model_id, input_tokens, output_tokens, "
+            "tokens_per_second, duration_ms, resp_status_code, src "
+            "from activity where ts_created >= ? "
+            "order by ts_created desc, id desc limit 3", (since,)).fetchall()
+        c.close()
+        tz = datetime.datetime.now().astimezone().tzinfo
+        for ts, mid, i, o, tps, dur, st, src in reversed(rows):
+            out["events"].append((datetime.datetime.fromtimestamp(ts, tz),
+                                  mid, i, o, tps, dur, st,
+                                  (src or "").replace("ip:", "")))
+    except Exception:
+        pass
+    return out
+
+
+def _ktok(n):
+    return "%.1fk" % (n / 1000.0) if n >= 1000 else str(n)
+
+
 def ai_activity():
     """What Colibri and Ollama have been doing, from journald. Cached 5 s."""
     now = time.time()
@@ -426,12 +475,37 @@ def ai_activity():
             o["when"] = ts
         res["ollama"] = o
 
+    # llama-swap: requests from its activity DB, running model from /running
+    lj = _llama_swap_activity()
+    if lj is not None:
+        res["llama"] = lj
+
     _ACT_CACHE["t"] = now
     _ACT_CACHE["v"] = res or None
     return _ACT_CACHE["v"]
 
 
-LLAMA_PORTS = (8000, 8010, 8020)
+LLAMA_PORTS = (8000, 8010, 8020)   # fixed extras; llama-swap upstreams are added
+LS_CONFIG = os.path.expanduser("~/.config/llama-swap/config.yaml")
+_PORTS_CACHE = {"t": 0.0, "v": None}
+
+
+def llama_ports():
+    """Every local port an LLM server can listen on: the fixed ones plus each
+    llama-swap model's --port / 127.0.0.1 proxy. Config re-read every 30 s."""
+    now = time.time()
+    if _PORTS_CACHE["v"] is not None and now - _PORTS_CACHE["t"] < 30:
+        return _PORTS_CACHE["v"]
+    ports = set(LLAMA_PORTS)
+    try:
+        txt = open(LS_CONFIG).read()
+        for m in re.finditer(r"(?:--port\s+|127\.0\.0\.1:)(\d{4,5})", txt):
+            ports.add(int(m.group(1)))
+    except Exception:
+        pass
+    _PORTS_CACHE["t"] = now
+    _PORTS_CACHE["v"] = sorted(ports)
+    return _PORTS_CACHE["v"]
 _LS_CACHE = {}
 
 
@@ -594,6 +668,8 @@ def chip_label(chip):
         return chip
     if chip.startswith("coretemp"):
         return "CPU package + cores"
+    if chip.startswith("k10temp"):
+        return "CPU Tctl + CCDs"
     if chip.startswith("spd5118"):
         return "DDR5 DIMM"
     if chip.startswith("gigabyte_wmi"):
@@ -662,9 +738,9 @@ def frame():
                f"{'one-shot' if ONESHOT else f'every {INTERVAL}s · ctrl-c to quit'}{N}\n")
 
     # ---- CPU
-    core = temps.get(next((c for c in temps if c.startswith("coretemp")), ""), [])
-    pkg = next((t for t in core if "Package" in t[0]), None)
-    cores = [t for t in core if t[0].startswith("Core")]
+    core = temps.get(next((c for c in temps if c.startswith(("coretemp", "k10temp"))), ""), [])
+    pkg = next((t for t in core if "Package" in t[0] or t[0] == "Tctl"), None)
+    cores = [t for t in core if t[0].startswith(("Core", "Tccd"))]
     pt = pkg[1] if pkg else (max((c[1] for c in cores), default=0))
     pc = (pkg[3] if pkg and pkg[3] else 105)
     pm = (pkg[2] if pkg and pkg[2] else 85)
@@ -739,7 +815,7 @@ def frame():
 
     # ---- Everything else lm-sensors knows
     extra = [c for c in temps
-             if not c.startswith(("coretemp", "nvme", "spd5118"))
+             if not c.startswith(("coretemp", "k10temp", "nvme", "spd5118"))
              and (SHOW_ALL or not c.startswith(NOISY))]
     if extra:
         buf.append(f"\n{B}SENSORS{N}")
@@ -767,7 +843,8 @@ def frame():
                 ml += f"  {D}{mpath}{N}"
             buf.append(ml)
     else:
-        for _port in LLAMA_PORTS:
+        _idle = []
+        for _port in llama_ports():
             ls = llama_server(_port)
             if ls:
                 slots = ls["slots"]
@@ -823,7 +900,10 @@ def frame():
                                    f"  {gp:.0f}%   {rt:.1f} tok/s"
                                    f"   {C}ETA {_eta_txt(eta)}{N}")
             else:
-                buf.append(f"\n{B}:{_port}{N}  {D}no LLM server{N}")
+                _idle.append(_port)
+        if _idle:
+            buf.append(f"\n{B}LLAMA idle{N}  {D}no LLM server on "
+                       + " ".join(f":{x}" for x in _idle) + f"{N}")
 
     # ---- Ollama
     ops = ollama_ps()
@@ -862,6 +942,30 @@ def frame():
             buf.append(f"  {C}colibri{N}  {head}{det}")
             for ts, m in c["events"]:
                 buf.append(f"     {D}{ts.strftime(TFMT)}  {m[:86]}{N}")
+        lj = act.get("llama")
+        if lj is not None:
+            run = lj["running"]
+            if run:
+                head = "  ".join(f"{G if st == 'ready' else Y}{m}{N}"
+                                 f" {D}{st} :{pt}{N}" for m, st, pt in run)
+            elif run is None:
+                head = f"{D}llama-swap unreachable{N}"
+            else:
+                head = f"{D}no model loaded{N}"
+            if lj["n"]:
+                errs = f"  {R}{lj['err']} err{N}" if lj["err"] else ""
+                summ = (f"   {D}6 h:{N} {lj['n']} req  "
+                        f"{_ktok(lj['tin'])} in / {_ktok(lj['tout'])} out"
+                        f"{errs}")
+            else:
+                summ = f"   {D}no requests in last 6 h{N}"
+            buf.append(f"  {C}llama{N}    {head}{summ}")
+            for ts, mid, i, o_, tps, dur, st, src in lj["events"]:
+                stc = G if st and st < 400 else R
+                buf.append(f"     {D}{ts.strftime(TFMT)}{N}  {C}{mid}{N}"
+                           f"  {i}\u2192{o_} tok  {tps:.1f} tok/s"
+                           f"  {dur / 1000.0:.1f}s  {stc}{st}{N}"
+                           f"  {D}{src}  ({_ago(ts)} ago){N}")
         o = act.get("ollama")
         if o is not None:
             last, when = o["last"], o["when"]
