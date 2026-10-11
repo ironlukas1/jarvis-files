@@ -2,7 +2,7 @@
 # model — pick a Jarvis model and bring it up end to end.
 set -uo pipefail
 
-REMOTE="${MODEL_REMOTE:-p620}"
+REMOTE="${MODEL_REMOTE:-jarvis}"
 TUNNEL="${MODEL_TUNNEL:-llm-tunnel}"
 PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
 OC_DIR="${OC_DIR:-$HOME/.config/opencode}"
@@ -12,7 +12,7 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=15"
 # Since 2026-10-11 the AI box is the P620 (.68, RTX 3090); jarvis (.59) is the homelab.
 # Deploy:  the P620 runs it from its ~/jarvis-files clone (git pull there).
 IS_LOCAL=0
-[[ "$(hostname 2>/dev/null)" =~ ^(p620|192\.168\.100\.68)$ ]] && IS_LOCAL=1
+[[ "$(hostname 2>/dev/null)" =~ ^(jarvis|192\.168\.100\.68)$ ]] && IS_LOCAL=1
 HOSTLBL="client -> $REMOTE"
 [[ "$IS_LOCAL" == 1 ]] && HOSTLBL="$(hostname) (local)"
 
@@ -228,7 +228,7 @@ write_opencode_config() { # write_opencode_config <key>
     .["$schema"] //= "https://opencode.ai/config.json"
     | .model = $dm
     | .provider.llamacpp.npm = "@ai-sdk/openai-compatible"
-    | .provider.llamacpp.name //= "llama.cpp (p620 tunnel :8000)"
+    | .provider.llamacpp.name //= "llama.cpp (jarvis tunnel :8000)"
     | .provider.llamacpp.options //= { baseURL:"http://localhost:8000/v1", apiKey:"local" }
     | .provider.llamacpp.models = ((.provider.llamacpp.models // {}) * $m)
     | .provider.llamacpp.models.eco.limit = { context: 65536, output: 16384 }

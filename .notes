@@ -25,4 +25,4 @@ opencode -m llamacpp/turbo   # po `model turbo`
 # s plným offloadom (docs/model-rules.md). 99k-262k, turbo pinnutý 65k.
 # ":fast" alias na ktoromkoľvek = thinking off (extrakcia, formátovanie).
 # ssh config: max ide priamo na 109.230.37.235 (router forwarduje :22 na .15);
-# jarvis, llm-tunnel a dell idú cez ProxyJump max. Hostnamy strojov ostali: p620 / jarvis / ppf.
+# jarvis, llm-tunnel a dell idú cez ProxyJump max. Hostnamy strojov = tie isté mená (jarvis / max / dell).
