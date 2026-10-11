@@ -1,11 +1,11 @@
 model                       # picker (fzf); model list | status | stop | logs | sync
-ssh jarvis                   # ai počítač P620 (RTX 3090 24G, 61G RAM)
-ssh max                      # homelab server (.15), skok na jarvis/dell
+ssh p620                     # ai počítač P620 (RTX 3090 24G, 61G RAM)
+ssh max                      # homelab server (.15), skok na p620/dell
 ssh dell                     # starý ppf (.59), zvyčajne vypnutý
 ssh -N llm-tunnel            # lokálne pripojenie pre llm (8000 + 11434)  — alebo: model tunnel
 opencode -m llamacpp/turbo   # po `model turbo`
 
-# jarvis (P620): :8000 je llama-swap (`systemctl --user status llama-swap`), nie llama.service.
+# p620: :8000 je llama-swap (`systemctl --user status llama-swap`), nie llama.service.
 # Modely: ~/.config/llama-swap/config.yaml (kópia v repo: models/llama-swap-config.yaml).
 # Načíta sa na požiadanie, ostatné sa odložia. `model stop` = /unload.
 # Nový model: docs/model-rules.md (najprv do llama-swap, potom bin/bench-model, potom riadok).
@@ -25,4 +25,4 @@ opencode -m llamacpp/turbo   # po `model turbo`
 # s plným offloadom (docs/model-rules.md). 99k-262k, turbo pinnutý 65k.
 # ":fast" alias na ktoromkoľvek = thinking off (extrakcia, formátovanie).
 # ssh config: max ide priamo na 109.230.37.235 (router forwarduje :22 na .15);
-# jarvis, llm-tunnel a dell idú cez ProxyJump max. Hostnamy strojov = tie isté mená (jarvis / max / dell).
+# p620, llm-tunnel a dell idú cez ProxyJump max. Hostnamy strojov = tie isté mená (p620 / max / dell).

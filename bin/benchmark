@@ -5,7 +5,7 @@
 set -uo pipefail
 
 ENDPOINT="${BENCH_ENDPOINT:-http://localhost:8000}"
-REMOTE="${MODEL_REMOTE:-jarvis}"
+REMOTE="${MODEL_REMOTE:-p620}"
 MODEL_BIN="${MODEL_BIN:-model}"
 RUNS="${BENCH_RUNS:-3}"
 MAXTOK="${BENCH_MAXTOK:-256}"
@@ -28,7 +28,7 @@ mkdir -p "$OUT_DIR"
 MD="$OUT_DIR/benchmark-$DATE.md"
 JSON="$OUT_DIR/benchmark-$DATE.json"
 
-on_jarvis() { [[ "$(hostname 2>/dev/null)" =~ ^(jarvis|192\.168\.100\.68)$ ]]; }
+on_jarvis() { [[ "$(hostname 2>/dev/null)" =~ ^(p620|192\.168\.100\.68)$ ]]; }
 jremote() { if on_jarvis; then bash -c "$1"; else ssh -o BatchMode=yes "$REMOTE" "$1" 2>/dev/null; fi; }
 jarvis_ram_mb()  { jremote "free -m | awk '/Mem:/{print \$3}'" || echo "?"; }
 jarvis_vram_mb() { jremote "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1" || echo "?"; }
