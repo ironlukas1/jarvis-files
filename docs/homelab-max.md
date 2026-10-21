@@ -58,6 +58,15 @@ mean max.
 - **SSH is internet-facing (WAN :22) and keys-only** since 2026-10-12
   (`/etc/ssh/sshd_config.d/10-hardening.conf`: no passwords, no root, no X11, MaxAuthTries 3). Bots
   had made ~194k password attempts before that. Never re-enable password auth.
+- **Second brain** (2026-10-20): `/home/ocino/ObsidianVault` is the always-on Syncthing hub copy of the
+  user's Obsidian vault (`Brain/` = shared Claude memory, tasks, session archive), synced with the laptop
+  and the phone. `syncthing@ocino.service` (Syncthing v2 from `apt.syncthing.net` stable-v2); GUI on
+  127.0.0.1:8384 only. Staggered versioning, 365 days, in `.stversions/`.
+- **Claude Code agent** (2026-10-20): Claude Code for ocino in `~/.local/bin/claude`, config in `~/.claude/`
+  (auto mode, shared memory `~/ObsidianVault/Brain/memory`, guard hooks, Remote Control at startup).
+  User units (`~/.config/systemd/user/`): `claude-rc.service` (always-on Remote Control server, opens in the
+  Claude app), `ai-inbox.path/.timer` (tasks in `Brain/AI-Inbox.md` → `claude --bg`), `brain-nightly.timer`
+  (04:00: session summaries, conflict report, git commit of the vault). Unit sources in `Brain/tools/systemd/`.
 
 ## Hardware and OS
 
@@ -109,6 +118,7 @@ All under `/home/admin/homelab/<project>`. Public URLs go through Traefik with L
 | monitoring | prometheus, alertmanager, grafana, node-exporter, cadvisor, exportarr ×3, uptime-kuma, notify-bridge | grafana / uptime .misaligned.dev | alerts → notify-bridge :8099 → HA webhook → phone push |
 | dashboard | homepage, dockerproxy | home.misaligned.dev | config in `dashboard/config/` |
 | searxng | searxng, searxng-valkey | search.misaligned.dev; 127.0.0.1:8888 | also the voice assistant's web-search tool |
+| forgejo | forgejo (v16, SQLite, data in forgejo/data) | git.misaligned.dev; 127.0.0.1:3300 | added 2026-10-20; registration off, sign-in required to view; HTTPS git only (SSH disabled) |
 | opengist / pingvin / privatebin | one each | gist / file / paste .misaligned.dev | |
 | n8n | n8n (SQLite, data in n8n/data, key in n8n/.env) | n8n.misaligned.dev | added 2026-10-19; owner account created on first visit |
 | menufy, nexar | nginx static sites | menufy.misaligned.dev, nexar.sk + www | |
@@ -158,6 +168,7 @@ mount is missing. **First run on max: 2026-10-12 02:00** — check that log.
 Default deny incoming. Allowed: 22 (any); 8123 from LAN + 172.22/16; 8770, 8099 from LAN;
 8790 from LAN + 172.22/16. rpcbind/NFS (an old leftover on :111) is disabled. **Docker-published ports bypass ufw** (80/443/53/53443 are open because
 docker publishes them) — bind to 127.0.0.1 if something must stay local.
+Syncthing's 22000 is **not** opened: devices reach max via QUIC hole-punching or public relays.
 
 ## Home Assistant essentials
 
@@ -214,6 +225,10 @@ this host since 2026-10-12, by ppf before that) and `_dumps/`. Migration scripts
 `~/cutover-jarvis.{sh,log}`, `~/jarvis-prep.{sh,log}`.
 
 ## Change log
+- 2026-10-20: user `brain` removed again; vault + Syncthing moved to ocino. Claude Code agent for ocino
+  (Remote Control server, AI Inbox, nightly brain job). Forgejo added (`forgejo/`).
+- 2026-10-20: second brain: user `brain`, `syncthing@brain`, folder `obsidianvault` shared with
+  cachyT15 (phone + p620 to follow). Plan: laptop `~/.claude/plans/sequential-fluttering-hollerith.md`.
 
 - 2026-10-15: space v11: 3D VMs use QEMU's D-Bus display (`<graphics type='dbus'>` + gl + `<audio type='dbus'>` + ich9 sound) instead of VNC + egl-headless, for 60 fps consoles with sound; space converts old-style 3D VMs (and adds a qemu-vdagent clipboard channel to q35 VMs) when it starts them. Needed a new AppArmor drop-in `/etc/apparmor.d/abstractions/libvirt-qemu.d/space-dbus-display` (libvirt runs a per-VM dbus-daemon under the VM's profile; Ubuntu's profile lacked it). space's Dashboard reads app stats with the API keys Homepage already has: it resolves `{{HOMEPAGE_VAR_*}}` from the homepage container's environment at runtime (memory only, never written anywhere). Settings > Notifications can add an Uptime Kuma HTTP monitor per app (stops Kuma, backs up kuma.db as kuma.db.bak-space-<stamp>, inserts rows, starts it) -- not run yet, the user clicks it.
 - 2026-10-14: space v10: qBittorrent opens inside space (router space-embed-qbittorrent + middleware of the same name in space-routes.yml: qBittorrent's own CSP kept, only frame-ancestors swapped; no qBittorrent config change). Tdarr 3.0: health checks enabled on Movies/Shows/Anime via its API (v3 shows "Some library queues won't be processed" without them); before-state saved in media_automation/tdarr-library-settings.bak-space-20261014-215747.json.
