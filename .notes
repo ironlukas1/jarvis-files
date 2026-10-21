@@ -1,9 +1,18 @@
-model                       # picker (fzf); model list | status | stop | logs | sync
-ssh p620                     # ai počítač P620 (RTX 3090 24G, 61G RAM)
-ssh max                      # homelab server (.15), skok na p620/dell
-ssh dell                     # starý ppf (.59), zvyčajne vypnutý
-ssh -N llm-tunnel            # lokálne pripojenie pre llm (8000 + 11434)  — alebo: model tunnel
-opencode -m llamacpp/turbo   # po `model turbo`
+# 
+
+- model                       # picker (fzf); model list | status | stop | logs | sync
+
+- ssh p620                     # ai počítač P620 (RTX 3090 24G, 61G RAM)
+
+- ssh max                      # homelab server (.15), skok na p620/dell
+
+- ssh dell                     # starý ppf (.59), zvyčajne vypnutý
+
+- ssh -N llm-tunnel            # lokálne pripojenie pre llm (8000 + 11434)  — alebo: model tunnel
+
+- opencode -m llamacpp/turbo   # po `model turbo`
+
+- ssh p620 'cat ~/ocr-anj-wb2/final/LOOP_PROGRESS_WB2.md'
 
 # p620: :8000 je llama-swap (`systemctl --user status llama-swap`), nie llama.service.
 # Modely: ~/.config/llama-swap/config.yaml (kópia v repo: models/llama-swap-config.yaml).
