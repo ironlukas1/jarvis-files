@@ -114,11 +114,12 @@ All under `/home/admin/homelab/<project>`. Public URLs go through Traefik with L
 | vaultwarden | vaultwarden | vault.misaligned.dev | passwords; nightly sqlite snapshot to `_dumps/` |
 | immich | immich_server, _machine_learning (OpenVINO, iGPU), _postgres, _redis | immich.misaligned.dev | photos (copied fully); pg_dump nightly |
 | jellyfin | jellyfin | jellyfin.misaligned.dev | QSV on the Intel iGPU (by-path, see GPU gotcha); libraries empty on max |
-| media_automation | gluetun (Surfshark VPN), qbittorrent (inside gluetun's netns), prowlarr, recyclarr (daily TRaSH sync; created profiles WEB-1080p in sonarr, HD Bluray + WEB in radarr), unpackerr, cleanuparr (127.0.0.1:11011 only, ssh tunnel; first-run setup needed), prefetcharr (Jellyfin -> sonarr next-episode search; Jellyfin api key "arr-tools"), janitorr (DRY-RUN ON in config/janitorr/application.yml; deletion expirations 90d-730d; leaving-soon off; exclusion tag janitorr_keep; uses Jellyfin admin login), checkrr (:8585 internal, weekly scan, process:false = report only), flaresolverr (Cloudflare solver, Prowlarr proxy tag `flaresolverr`), radarr, sonarr, bazarr, seerr, tdarr-server/-node, jellystat(+db) | qbittorrent / prowlarr / radarr / sonarr / seerr .misaligned.dev | media not migrated → *arr may re-download monitored titles (user accepted) |
+| media_automation | gluetun (Surfshark VPN), qbittorrent (inside gluetun's netns), prowlarr, recyclarr (daily TRaSH sync; created profiles WEB-1080p in sonarr, HD Bluray + WEB in radarr), unpackerr, cleanuparr (127.0.0.1:11011 only, ssh tunnel; admin account set up and connected to sonarr/radarr/qbittorrent 2026-10-21), prefetcharr (Jellyfin -> sonarr next-episode search; Jellyfin api key "arr-tools"), janitorr (DRY-RUN ON in config/janitorr/application.yml; deletion expirations 90d-730d; leaving-soon off; exclusion tag janitorr_keep; uses Jellyfin admin login), checkrr (:8585 internal, weekly scan, process:false = report only), flaresolverr (Cloudflare solver, Prowlarr proxy tag `flaresolverr`), radarr, sonarr, bazarr, seerr, tdarr-server/-node (jellystat removed 2026-10-21; data left in data/jellystat) | qbittorrent / prowlarr / radarr / sonarr / seerr .misaligned.dev | media not migrated → *arr may re-download monitored titles (user accepted) |
 | monitoring | prometheus, alertmanager, grafana, node-exporter, cadvisor, exportarr ×3, uptime-kuma, notify-bridge | grafana / uptime .misaligned.dev | alerts → notify-bridge :8099 → HA webhook → phone push |
 | dashboard | homepage, dockerproxy | home.misaligned.dev | config in `dashboard/config/` |
 | searxng | searxng, searxng-valkey | search.misaligned.dev; 127.0.0.1:8888 | also the voice assistant's web-search tool |
-| forgejo | forgejo (v16, SQLite, data in forgejo/data) | git.misaligned.dev; 127.0.0.1:3300 | added 2026-10-20; registration off, sign-in required to view; HTTPS git only (SSH disabled) |
+| forgejo | forgejo (v16, SQLite, data in forgejo/data) | git.misaligned.dev (public via Traefik since 2026-10-21; host port 3300 dropped) | added 2026-10-20; registration off, sign-in required to view; HTTPS git only (SSH disabled) |
+| mail | mailserver (docker-mailserver v16, Postfix+Dovecot+Rspamd, fail2ban, no ClamAV), mail-web (nginx stub that lets Traefik issue the cert for mail.misaligned.dev) | mail.misaligned.dev: SMTP 25, submission 465/587, IMAP 993 on the WAN IP 109.230.37.235 (DNS-only, not proxied) | added 2026-10-22; mailboxes menufy@ (Supabase auth SMTP), hello@, luke@misaligned.dev; passwords in mail/credentials.txt (600); TLS read from infra/letsencrypt/acme.json; DKIM selector `mail`; needs router forward of 25/465/587/993 to .15 and a PTR for the WAN IP set to mail.misaligned.dev by Orange |
 | opengist / pingvin / privatebin | one each | gist / file / paste .misaligned.dev | |
 | n8n | n8n (SQLite, data in n8n/data, key in n8n/.env) | n8n.misaligned.dev | added 2026-10-19; owner account created on first visit |
 | menufy, nexar | nginx static sites | menufy.misaligned.dev, nexar.sk + www | |
@@ -225,6 +226,9 @@ this host since 2026-10-12, by ppf before that) and `_dumps/`. Migration scripts
 `~/cutover-jarvis.{sh,log}`, `~/jarvis-prep.{sh,log}`.
 
 ## Change log
+- 2026-10-21: jellystat + jellystat-db removed (compose + Homepage entry; backups `*.bak-remove-jellystat`; data dir kept).
+  Vault git history started (`~/ObsidianVault/.git`); `Brain/tools/push-to-forgejo.sh` pushes repos to Forgejo.
+- 2026-10-21: Forgejo made public (traefik.enable=true, 3300 host port removed). Cleanuparr first-run setup done (by the user).
 - 2026-10-20: user `brain` removed again; vault + Syncthing moved to ocino. Claude Code agent for ocino
   (Remote Control server, AI Inbox, nightly brain job). Forgejo added (`forgejo/`).
 - 2026-10-20: second brain: user `brain`, `syncthing@brain`, folder `obsidianvault` shared with
@@ -288,7 +292,7 @@ build here). Don't hand-edit the deployed code or `space/docker-compose.yml` (de
 - It writes **`infra/dynamic/space-routes.yml`** (regenerated at start + every 10 min from Traefik's API):
   `space-embed-<app>` override routers (priority 1000, same service) that add middleware `space-embed` = strip
   X-Frame-Options + `CSP frame-ancestors https://space.misaligned.dev`, so apps open inside space windows; and
-  `sp-<app>.misaligned.dev` routes for LAN-only apps (bazarr, tdarr, jellystat, prometheus, alertmanager) behind
+  `sp-<app>.misaligned.dev` routes for LAN-only apps (bazarr, tdarr, prometheus, alertmanager) behind
   forwardAuth to space. **Delete that file to undo all of it**; the original routers are untouched.
 - **Versions:** every deploy is a git tag `vN` in the laptop repo and an image `space:vN` here (`space:latest` = running).
   Roll back: Settings > About in space, or `deploy/rollback.sh vN` from the laptop (= `docker tag space:vN space:latest`

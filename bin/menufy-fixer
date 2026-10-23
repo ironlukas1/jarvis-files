@@ -1,0 +1,16 @@
+#!/bin/bash
+# Runs on max as ocino. Loops until $UNTIL (default 14:00 today): Sonnet 5.5 low reads the menufy Notion
+# bug board, fixes not-done items, pushes to Forgejo and redeploys menufy.misaligned.dev.
+# Usage: menufy-fixer [HH:MM]   (log: ~/work/menufy-fixer.log)
+export PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+UNTIL=$(date -d "today ${1:-14:00}" +%s)
+REPO=$HOME/work/menufy
+PROMPT='You are menufy-fixer. Repo: ~/work/menufy (Vite+React app in app/). Use the Notion MCP to find the menufy bug board and list items whose status is not Done. If none, reply "nothing to do" and stop.
+For each (one at a time, smallest first): set the Notion status to In progress, fix it in app/src, run `cd app && pnpm build` (must pass), commit with a clear message, then run `git pull --rebase && git push` and `bash ~/work/menufy/deploy/deploy-max.sh`. Then set the Notion status to Done and add a short comment of what changed. If a fix is unclear or risky, leave a Notion comment with the question and set status Blocked instead. Never touch secrets or anything outside ~/work/menufy and the menufy Notion board.'
+while [ "$(date +%s)" -lt "$UNTIL" ]; do
+  git -C "$REPO" pull -q --rebase
+  echo "== $(date -Is) run" >>"$HOME/work/menufy-fixer.log"
+  (cd "$REPO" && timeout 40m claude -p --model claude-sonnet-5-5 --effort low --permission-mode auto "$PROMPT") >>"$HOME/work/menufy-fixer.log" 2>&1
+  sleep 600
+done
+echo "== $(date -Is) done (past $1)" >>"$HOME/work/menufy-fixer.log"
