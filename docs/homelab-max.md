@@ -282,6 +282,8 @@ Managed from space (Virtual Machines app); plain libvirt underneath, so `sudo vi
 ## Minecraft (added 2026-10-12)
 `minecraft/` = itzg/minecraft-server, TYPE=MODRINTH, pack better-mc-neoforge-bmc5 **v31** (MC 1.21.1, NeoForge), 12G heap, 5 slots, :25565 (ufw open). Data in minecraft/data. Watchtower disabled for it. Public name play.misaligned.dev must be a **DNS-only** (grey cloud) A record -> WAN IP; router needs TCP 25565 -> .15 (pending user).
 
+**Hostname routing (added 2026-10-23):** `minecraft-router/` = itzg/mc-router, the only thing on host :25565. Maps `play.misaligned.dev` -> `minecraft` (BMC5, default for bare-IP joins) and `atm.misaligned.dev` -> `atm10` (All the Mods 10, NeoForge 21.1.228, 10G, data in `minecraft-atm10/data`, from the user's atm100.zip). Both servers join docker network `mcnet` and publish no ports. Add a server = new container on `mcnet` + a MAPPING line. `atm.misaligned.dev` needs a DNS-only A record -> WAN IP. atm10 is still online-mode=true (pack default), no whitelist; BMC5 stays offline + whitelist.
+
 ## space (added 2026-10-12)
 Web desktop for max at **https://space.misaligned.dev** (login = password + TOTP, single user). Source of truth:
 the user's laptop repo `~/Projects/space`; deployed with its `deploy/deploy.sh` (rsync to `~/builds/space`, compose
